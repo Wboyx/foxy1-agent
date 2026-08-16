@@ -29,7 +29,7 @@ CONFIG_FILE = os.path.join(BASE_DIR, "foxy1-monitor.env")
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 LOG_FILE = os.path.join(BASE_DIR, "foxy1-monitor.log")
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 
 # ---------------------------------------------------------------------
@@ -156,6 +156,46 @@ def send_telegram(cfg, text):
         return False
 
 
+INCIDENT_QUEUE = os.path.join(BASE_DIR, "incidents.jsonl")
+
+
+def queue_incident(key, title, body, severity):
+    """
+    ثبت رویداد در صف تا دستیار گفت‌وگویی آن را بردارد و
+    با زبان طبیعی توضیح دهد.
+
+    چرا صف و نه ارسال مستقیم:
+    پایشگر باید مستقل بماند. اگر مدل یا سهمیه از کار بیفتد،
+    پایش نباید بخوابد. پس فقط می‌نویسد و خودش را درگیر نمی‌کند.
+    """
+    try:
+        rec = {
+            "key": key, "title": title, "body": body,
+            "severity": severity, "at": time.time(), "host": socket_host(),
+        }
+        with open(INCIDENT_QUEUE, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return True
+    except Exception as exc:
+        log(f"ثبت رویداد ناموفق: {exc}")
+        return False
+
+
+def queue_is_consumed():
+    """آیا دستیار صف را برمی‌دارد؟ اگر نه، خودمان مستقیم خبر می‌دهیم."""
+    try:
+        if not os.path.exists(INCIDENT_QUEUE):
+            return True
+        size = os.path.getsize(INCIDENT_QUEUE)
+        if size == 0:
+            return True
+        age = time.time() - os.path.getmtime(INCIDENT_QUEUE)
+        # اگر بیش از سه دقیقه دست‌نخورده مانده، یعنی کسی نمی‌خواندش
+        return age < 180
+    except Exception:
+        return True
+
+
 def alert(cfg, state, key, title, body, severity="warn"):
     """هشدار با ضد تکرار — همان هشدار زودتر از بازه تعیین‌شده دوباره فرستاده نمی‌شود."""
     now = time.time()
@@ -165,19 +205,26 @@ def alert(cfg, state, key, title, body, severity="warn"):
     if now - last < gap:
         return False
 
-    icon = {"crit": "🔴", "warn": "🟠", "ok": "🟢"}.get(severity, "🔵")
-    msg = f"{icon} <b>{title}</b>\n\n{body}\n\n<code>{socket_host()}</code>"
-    if send_telegram(cfg, msg):
-        state["alerts"][key] = now
-        log(f"هشدار ارسال شد: {key}")
-        return True
-    return False
+    queued = queue_incident(key, title, body, severity)
+
+    # اگر دستیار در دسترس نیست، خودمان خام می‌فرستیم
+    if not queued or not queue_is_consumed():
+        icon = {"crit": "🔴", "warn": "🟠", "ok": "🟢"}.get(severity, "🔵")
+        msg = f"{icon} <b>{title}</b>\n\n{body}\n\n<code>{socket_host()}</code>"
+        send_telegram(cfg, msg)
+        log(f"هشدار مستقیم ارسال شد: {key}")
+    else:
+        log(f"رویداد در صف ثبت شد: {key}")
+
+    state["alerts"][key] = now
+    return True
 
 
 def clear_alert(cfg, state, key, title, body):
     """وقتی مشکل رفع شد، یک بار پیام بازگشت به حالت عادی بفرست."""
     if key in state["alerts"]:
-        send_telegram(cfg, f"🟢 <b>{title}</b>\n\n{body}")
+        if not queue_incident(f"resolved:{key}", title, body, "ok"):
+            send_telegram(cfg, f"🟢 <b>{title}</b>\n\n{body}")
         del state["alerts"][key]
         log(f"وضعیت عادی شد: {key}")
 
