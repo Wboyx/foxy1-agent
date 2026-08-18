@@ -182,7 +182,7 @@ else
       api="${api%/}"
       for i in 1 2 3; do
         r=$(timeout 25 curl -s -o /tmp/.foxy_gm.$$ -w "%{http_code} %{time_total}s" --max-time 22 "${api}/bot${tok}/getMe" 2>/dev/null)
-        ok=$( (have jq && jq -r '.ok' </tmp/.foxy_gm.$$ 2>/dev/null) || grep -o '"ok":[a-z]*' /tmp/.foxy_gm.$$ 2>/dev/null | head -1)
+        ok=$(if [ -s /tmp/.foxy_gm.$$ ]; then (have jq && jq -r '.ok' </tmp/.foxy_gm.$$ 2>/dev/null) || grep -o '"ok":[a-z]*' /tmp/.foxy_gm.$$ 2>/dev/null | head -1; else echo "no-body"; fi)
         echo "    getMe try$i : http=$r ok=$ok"
       done
       rm -f /tmp/.foxy_gm.$$
