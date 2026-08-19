@@ -31,6 +31,11 @@ MARK_START="# >>> foxy1-vercel-pin >>>"
 MARK_END="# <<< foxy1-vercel-pin <<<"
 TIMEOUT=7
 
+# اگر IP فعلی سالم ولی کندتر از این حد بود، دنبال IP بهتر می‌گردیم
+SLOW_THRESHOLD="${SLOW_THRESHOLD:-0.8}"
+# فقط وقتی جابه‌جا می‌شویم که گزینه جدید دست‌کم این نسبت سریع‌تر باشد
+IMPROVE_RATIO="${IMPROVE_RATIO:-0.7}"
+
 log() { printf '%s | pin | %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOGF"; [ "${VERBOSE:-1}" = "1" ] && echo "$1"; return 0; }
 
 mkdir -p "$CONF_DIR" "$BACKUP_DIR"; chmod 700 "$CONF_DIR" "$BACKUP_DIR"
@@ -101,14 +106,19 @@ NEWBLOCK=""
 for HOST in $(grep -vE '^\s*(#|$)' "$PIN_CONF"); do
   CUR="$(current_pin "$HOST")"
 
-  # اگر IP فعلی هنوز سالم است، دست نزن
-  if [ -n "$CUR" ] && T=$(test_ip "$HOST" "$CUR"); then
-    log "OK $HOST stays on $CUR (${T}s)"
-    NEWBLOCK="$NEWBLOCK$CUR $HOST"$'\n'
-    continue
+  CURT=""
+  # اگر IP فعلی سالم و سریع است، دست نزن
+  if [ -n "$CUR" ] && CURT=$(test_ip "$HOST" "$CUR"); then
+    if awk "BEGIN{exit !($CURT <= $SLOW_THRESHOLD)}"; then
+      log "OK $HOST stays on $CUR (${CURT}s)"
+      NEWBLOCK="$NEWBLOCK$CUR $HOST"$'\n'
+      continue
+    fi
+    log "SLOW $HOST on $CUR (${CURT}s > ${SLOW_THRESHOLD}s) — looking for a faster IP"
+  else
+    CURT=""
+    [ -n "$CUR" ] && log "DOWN $HOST current pin $CUR failed — searching"
   fi
-
-  [ -n "$CUR" ] && log "DOWN $HOST current pin $CUR failed — searching"
 
   CANDIDATES="$(echo "$STATIC_IPS $(discover_ips "$HOST")" | tr ' ' '\n' | grep -E '^[0-9.]+$' | sort -u)"
   BEST=""; BESTT="99"
@@ -122,6 +132,13 @@ for HOST in $(grep -vE '^\s*(#|$)' "$PIN_CONF"); do
   if [ -z "$BEST" ]; then
     log "NO healthy IP found for $HOST — hosts file untouched"
     [ -n "$CUR" ] && NEWBLOCK="$NEWBLOCK$CUR $HOST"$'\n'
+    continue
+  fi
+
+  # ضدنوسان: اگر IP فعلی سالم بود، فقط وقتی عوض کن که گزینه جدید واقعاً بهتر باشد
+  if [ -n "$CURT" ] && ! awk "BEGIN{exit !($BESTT < $CURT * $IMPROVE_RATIO)}"; then
+    log "KEEP $HOST on $CUR (${CURT}s) — best alternative ${BEST} (${BESTT}s) is not clearly faster"
+    NEWBLOCK="$NEWBLOCK$CUR $HOST"$'\n'
     continue
   fi
 
