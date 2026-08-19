@@ -63,3 +63,36 @@ nano /opt/foxy1-relay-guard/relays.conf
 ```
 
 هر خط یک آدرس، به ترتیب اولویت.
+
+---
+
+## قفل IP — درس 2026-08-19
+
+یافته مهم: بعضی IPهای Vercel از ایران بسته‌اند و بعضی باز، و DNS تصادفی یکی را برمی‌گرداند.
+
+```text
+64.29.17.195  code=200  0.47s   باز
+64.29.17.129  code=200  0.50s   باز
+64.29.17.3    code=000          بسته
+216.198.79.x  code=000          بسته
+76.76.21.21   code=000          بسته
+```
+
+یعنی نام دامنه سالم است ولی مسیر قرعه‌کشی می‌شود. راه‌حل، قفل نام روی IP سالم در فایل hosts و به‌روزرسانی خودکار هر ده دقیقه است.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Wboyx/foxy1-agent/main/relay-guard/install-pin.sh -o /root/install-pin.sh
+bash /root/install-pin.sh NAME.vercel.app
+```
+
+وضعیت:
+
+```bash
+/opt/foxy1-relay-guard/vercel-pin.sh status
+```
+
+حذف:
+
+```bash
+/opt/foxy1-relay-guard/vercel-pin.sh remove
+```
