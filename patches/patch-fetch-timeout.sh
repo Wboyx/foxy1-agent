@@ -52,7 +52,8 @@ sha256sum -c "$BDIR/bot.sha256" >/dev/null 2>&1 || { red "صحت بکاپ تأی
 grn "بکاپ گرفته و تأیید شد:"; echo "  $BDIR/bot.js.bak"
 
 hr; echo " مرحله ۳ — ساخت نسخه جدید"; hr
-TMP="$(mktemp /root/bot.js.new.XXXXXX)"
+# نکته: فایل موقت باید پسوند .js داشته باشد وگرنه node --check کار نمی‌کند
+TMP="/root/.foxy1-bot-new-${STAMP}.js"
 
 read -r -d '' PATCH_CODE <<'PATCHEOF' || true
 // ===== __FOXY1_FETCH_TIMEOUT__ (Fox Auto host, 2026-08-19) =====
