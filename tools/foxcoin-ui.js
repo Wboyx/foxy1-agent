@@ -22,13 +22,17 @@ const coin = require('./foxcoin');
 const T = {
   title: '🪙 فاکس کوین',
   balance: '💰 موجودی من',
-  shop: '🛒 خرید با کوین',
+  shop: '🛒 فروشگاه کوینی',
   missions: '🎯 ماموریت‌ها',
-  referral: '👥 زیرمجموعه‌های من',
-  history: '📜 تاریخچه',
+  referral: '👥 دعوت دوستان',
+  history: '📜 گردش حساب',
+  guide: '❓ راهنما',
   back: '⬅️ بازگشت',
-  soon: 'این بخش در مرحله بعد فعال می‌شود.',
+  home: '🏠 منوی اصلی',
+  soon: 'این بخش به‌زودی فعال می‌شود.',
 };
+
+const LINE = '➖➖➖➖➖➖➖➖➖➖';
 
 const EVENT_FA = {
   signup: 'جایزه ثبت‌نام',
@@ -59,42 +63,115 @@ function kb(rows) {
 
 function screenMenu(uid) {
   const bal = coin.getBalance(uid);
+  const items = coin.listProducts();
+  const cheapest = items.length ? items[0].coins : null;
   const text =
-    '<b>' + T.title + '</b>\n\n' +
-    'موجودی فعلی شما\n' +
+    '<b>' + T.title + '</b>\n' +
+    'سکه اختصاصی فاکس شاپ\n' + LINE + '\n\n' +
+    '💰 <b>موجودی شما</b>\n' +
     '<code>' + fa(bal) + '</code> کوین\n\n' +
-    'با کوین می‌توانید اشتراک رایگان بگیرید.';
+    (cheapest !== null
+      ? (bal >= cheapest
+          ? '✅ موجودی شما برای خرید کافی است.\n\n'
+          : '📈 برای ارزان‌ترین سرویس <code>' + fa(cheapest - bal) +
+            '</code> کوین دیگر لازم دارید.\n\n')
+      : '') +
+    '🎁 با فعالیت در ربات کوین جمع کنید و\n' +
+    'سرویس رایگان بگیرید.\n\n' +
+    '<i>برای شروع، راهنما را ببینید.</i>';
   return {
     text: text,
     markup: kb([
+      [{ text: T.shop, callback_data: 'coin:shop', style: 'success' }],
       [{ text: T.balance, callback_data: 'coin:bal' },
-       { text: T.shop, callback_data: 'coin:shop', style: 'success' }],
+       { text: T.history, callback_data: 'coin:hist' }],
       [{ text: T.missions, callback_data: 'coin:miss' },
        { text: T.referral, callback_data: 'coin:ref' }],
-      [{ text: T.history, callback_data: 'coin:hist' }],
-      [{ text: T.back, callback_data: 'back_main' }],
+      [{ text: T.guide, callback_data: 'coin:help', style: 'primary' }],
+      [{ text: T.home, callback_data: 'back_main' }],
     ]),
   };
+}
+
+/**
+ * راهنما. تمام اعداد از تنظیمات زنده خوانده می‌شوند.
+ *
+ * چرا: اگر نرخ‌ها را در متن ثابت بنویسیم، روزی که از پنل عوضشان کنی
+ * راهنما دروغ می‌گوید. متن ثابت، بدترین نوع مستندات است.
+ */
+function screenGuide(uid) {
+  const c = coin.getSettings();
+  const items = coin.listProducts();
+  const earn = [];
+  if (c.signupReward > 0) {
+    earn.push('• ثبت‌نام در ربات\n   <code>' + fa(c.signupReward) + '</code> کوین، یک‌بار');
+  }
+  earn.push(c.purchaseMode === 'relative'
+    ? '• خرید سرویس\n   هر <code>' + fa(c.purchasePerAmount) +
+      '</code> تومان، <code>1</code> کوین'
+    : '• خرید سرویس\n   هر خرید <code>' + fa(c.purchaseFixed) + '</code> کوین');
+  if (c.referralReward > 0) {
+    earn.push('• خرید دوستان دعوت‌شده\n   هر خرید <code>' +
+              fa(c.referralReward) + '</code> کوین');
+  }
+  earn.push('• انجام ماموریت‌ها\n   جایزه هر ماموریت متفاوت است');
+
+  let spend = 'هنوز محصولی تعریف نشده است.';
+  if (items.length) {
+    spend = items.map(p =>
+      '• ' + p.label + '\n   <code>' + fa(p.coins) + '</code> کوین'
+    ).join('\n');
+  }
+
+  const text =
+    '<b>' + T.guide + ' فاکس کوین</b>\n' + LINE + '\n\n' +
+    '<b>فاکس کوین چیست</b>\n' +
+    'یک امتیاز داخلی که با فعالیت در ربات جمع می‌شود و\n' +
+    'با آن بدون پرداخت پول، سرویس می‌گیرید.\n\n' +
+    '<b>چطور کوین بگیرم</b>\n' + earn.join('\n') + '\n\n' +
+    '<b>با کوین چه بگیرم</b>\n' + spend + '\n\n' +
+    '<b>قوانین</b>\n' +
+    '• سقف دریافت روزانه <code>' + fa(c.dailyCap) + '</code> کوین\n' +
+    '• هر ماموریت فقط یک‌بار قابل دریافت است\n' +
+    '• کوین دعوت پس از <b>خرید</b> دوست شما داده می‌شود، نه ثبت‌نام\n' +
+    '• کوین قابل انتقال به کاربر دیگر یا تبدیل به پول نیست\n\n' +
+    '<i>همه رویدادها در گردش حساب ثبت می‌شود.</i>';
+  return { text: text, markup: kb([
+    [{ text: T.shop, callback_data: 'coin:shop', style: 'success' }],
+    [{ text: T.back, callback_data: 'coin' }],
+  ]) };
 }
 
 function screenBalance(uid) {
   const led = coin.readLedger().filter(r => String(r.uid) === String(uid));
   const earned = led.filter(r => r.amount > 0).reduce((a, r) => a + r.amount, 0);
   const spent = led.filter(r => r.amount < 0).reduce((a, r) => a - r.amount, 0);
+  const c = coin.getSettings();
+  const today = coin.readLedger().filter(r =>
+    String(r.uid) === String(uid) && r.amount > 0 && r.type !== 'admin' &&
+    new Date(r.ts).toDateString() === new Date().toDateString())
+    .reduce((a, r) => a + r.amount, 0);
   const text =
-    '<b>' + T.balance + '</b>\n\n' +
-    'موجودی فعلی\n<code>' + fa(coin.getBalance(uid)) + '</code> کوین\n\n' +
-    'مجموع دریافتی\n<code>' + fa(earned) + '</code> کوین\n\n' +
-    'مجموع خرج‌شده\n<code>' + fa(spent) + '</code> کوین';
-  return { text: text, markup: kb([[{ text: T.back, callback_data: 'coin' }]]) };
+    '<b>' + T.balance + '</b>\n' + LINE + '\n\n' +
+    '💰 <b>موجودی فعلی</b>\n<code>' + fa(coin.getBalance(uid)) + '</code> کوین\n\n' +
+    '📥 مجموع دریافتی\n<code>' + fa(earned) + '</code> کوین\n\n' +
+    '📤 مجموع خرج‌شده\n<code>' + fa(spent) + '</code> کوین\n\n' +
+    '📅 دریافتی امروز\n<code>' + fa(today) + '</code> از <code>' +
+    fa(c.dailyCap) + '</code> کوین\n\n' +
+    '<i>سقف روزانه هر شب صفر می‌شود.</i>';
+  return { text: text, markup: kb([
+    [{ text: T.guide, callback_data: 'coin:help' }],
+    [{ text: T.back, callback_data: 'coin' }]]) };
 }
 
 function screenHistory(uid) {
   const rows = coin.history(uid, 15);
-  let text = '<b>' + T.history + '</b>\n\n';
+  let text = '<b>' + T.history + '</b>\n' + LINE + '\n\n';
   if (!rows.length) {
-    text += 'هنوز هیچ رویدادی ثبت نشده است.';
+    text += 'هنوز رویدادی ثبت نشده است.\n\n' +
+            '<i>به محض دریافت یا خرج کوین، اینجا ثبت می‌شود.</i>';
   } else {
+    text += '<i>۱۵ رویداد آخر</i>\n\n';
     text += rows.map(r => {
       const sign = r.amount > 0 ? '+' : '';
       return when(r.ts) + '  ' + (EVENT_FA[r.type] || r.type) +
@@ -114,12 +191,17 @@ function screenReferral(uid, botUsername) {
     ? 'https://t.me/' + botUsername + '?start=ref' + uid
     : 'ref' + uid;
   const text =
-    '<b>' + T.referral + '</b>\n\n' +
-    'به ازای هر خرید زیرمجموعه\n<code>' + fa(c.referralReward) + '</code> کوین می‌گیرید.\n\n' +
-    'تعداد خرید زیرمجموعه‌ها\n<code>' + fa(led.length) + '</code>\n\n' +
-    'کوین دریافتی از این راه\n<code>' + fa(total) + '</code>\n\n' +
-    'لینک دعوت شما\n<code>' + link + '</code>';
-  return { text: text, markup: kb([[{ text: T.back, callback_data: 'coin' }]]) };
+    '<b>' + T.referral + '</b>\n' + LINE + '\n\n' +
+    'لینک زیر را برای دوستانتان بفرستید.\n' +
+    'هر بار که یکی از آن‌ها سرویس بخرد،\n' +
+    '<code>' + fa(c.referralReward) + '</code> کوین به شما می‌رسد.\n\n' +
+    '🔗 <b>لینک دعوت شما</b>\n<code>' + link + '</code>\n\n' + LINE + '\n\n' +
+    '🛒 خرید دوستان شما\n<code>' + fa(led.length) + '</code> بار\n\n' +
+    '🪙 کوین دریافتی از دعوت\n<code>' + fa(total) + '</code> کوین\n\n' +
+    '<i>کوین پس از خرید دوست شما داده می‌شود، نه پس از ثبت‌نام.</i>';
+  return { text: text, markup: kb([
+    [{ text: T.guide, callback_data: 'coin:help' }],
+    [{ text: T.back, callback_data: 'coin' }]]) };
 }
 
 // ───────────────────────── فروشگاه کوینی ─────────────────────────
@@ -127,9 +209,12 @@ function screenReferral(uid, botUsername) {
 function screenShop(uid) {
   const items = coin.listProducts();
   const bal = coin.getBalance(uid);
-  let text = '<b>' + T.shop + '</b>\n\nموجودی شما <code>' + fa(bal) + '</code> کوین\n';
+  let text = '<b>' + T.shop + '</b>\n' + LINE + '\n\n' +
+             '💰 موجودی شما <code>' + fa(bal) + '</code> کوین\n\n' +
+             '<i>پس از تأیید، سرویس بلافاصله ساخته می‌شود.</i>\n';
   if (!items.length) {
-    text += '\nهنوز محصولی برای خرید با کوین تعریف نشده است.';
+    text += '\n📭 هنوز محصولی برای خرید با کوین تعریف نشده است.\n' +
+            'کوین‌هایتان محفوظ است، به‌زودی سر بزنید.';
     return { text: text, markup: kb([[{ text: T.back, callback_data: 'coin' }]]) };
   }
   const rows = items.map(p => {
@@ -146,12 +231,13 @@ function screenConfirm(uid, pid) {
   if (!p) return screenError('این محصول دیگر موجود نیست.');
   const bal = coin.getBalance(uid);
   const text =
-    '<b>تأیید خرید</b>\n\n' +
-    'محصول\n' + p.label + '\n\n' +
+    '<b>🧾 تأیید خرید</b>\n' + LINE + '\n\n' +
+    '📦 محصول\n' + p.label + '\n\n' +
     (p.gb ? 'حجم\n<code>' + fa(p.gb) + '</code> گیگابایت\n\n' : '') +
     (p.days ? 'مدت\n<code>' + fa(p.days) + '</code> روز\n\n' : '') +
     'هزینه\n<code>' + fa(p.coins) + '</code> کوین\n\n' +
-    'موجودی بعد از خرید\n<code>' + fa(bal - p.coins) + '</code> کوین';
+    '💳 موجودی بعد از خرید\n<code>' + fa(bal - p.coins) + '</code> کوین\n\n' +
+    '<i>این خرید قابل بازگشت نیست.</i>';
   return { text: text, markup: kb([
     [{ text: '✅ تأیید و دریافت', callback_data: 'coin:go:' + p.id, style: 'success' }],
     [{ text: '⬅️ انصراف', callback_data: 'coin:shop' }],
@@ -222,10 +308,11 @@ async function doPurchase(ctx, pid) {
       return screenError('سرویس ساخته شد ولی ثبت کوین انجام نشد. به پشتیبانی بگویید.');
     }
     return {
-      text: '<b>✅ انجام شد</b>\n\n' + p.label + ' برای شما صادر شد.\n\n' +
+      text: '<b>✅ خرید انجام شد</b>\n' + LINE + '\n\n' +
+            '📦 ' + p.label + ' برای شما صادر شد.\n\n' +
             '<code>' + fa(p.coins) + '</code> کوین کم شد.\n' +
             'موجودی جدید <code>' + fa(r.balance) + '</code> کوین\n\n' +
-            'مشخصات سرویس در پیام بعدی ارسال شد.',
+            '📩 مشخصات و لینک اتصال در پیام بعدی ارسال شد.',
       markup: kb([[{ text: T.back, callback_data: 'coin' }]]),
     };
   } finally {
@@ -257,6 +344,7 @@ async function route(ctx) {
   else if (d === 'coin:hist') s = screenHistory(ctx.uid);
   else if (d === 'coin:ref') s = screenReferral(ctx.uid, ctx.botUsername);
   else if (d === 'coin:shop') s = screenShop(ctx.uid);
+  else if (d === 'coin:help') s = screenGuide(ctx.uid);
   else if (d === 'coin:miss') s = screenSoon(T.missions);
   else if (d.startsWith('coin:poor:')) s = screenPoor(ctx.uid, d.slice(10));
   else if (d.startsWith('coin:buy:')) s = screenConfirm(ctx.uid, d.slice(9));
@@ -271,7 +359,8 @@ async function route(ctx) {
 const MENU_BUTTON = { text: T.title, callback_data: 'coin' };
 
 module.exports = { route, MENU_BUTTON, T, screenMenu, screenBalance,
-                   screenHistory, screenReferral, screenShop, screenConfirm };
+                   screenHistory, screenReferral, screenShop, screenConfirm,
+                   screenGuide };
 
 // ───────────────────────── خودآزمون ─────────────────────────
 
@@ -287,7 +376,7 @@ if (require.main === module) {
 
     const m = screenMenu('u9');
     a(m.text.includes('12'), 'موجودی در منو درست نمایش داده شد');
-    a(m.markup.inline_keyboard.length === 4, 'منو چهار ردیف دارد');
+    a(m.markup.inline_keyboard.length === 5, 'منو پنج ردیف دارد');
     a(JSON.stringify(m.markup).includes('"style":"success"'),
       'دکمه خرید سبز است');
 
@@ -371,6 +460,32 @@ if (require.main === module) {
       // موجودی ناکافی
       const r4 = await doPurchase(okCtx, 'PBIG');
       a(r4.text.includes('کوین دیگر لازم'), 'موجودی ناکافی جلوی خرید را گرفت');
+
+      // ── راهنمای زنده
+      coin.setSetting('referralReward', 17);
+      coin.setSetting('dailyCap', 333);
+      let g = screenGuide('u9');
+      a(g.text.includes('17'), 'راهنما نرخ دعوت را از تنظیمات زنده خواند');
+      a(g.text.includes('333'), 'راهنما سقف روزانه را زنده خواند');
+      a(g.text.includes('سی گیگ'), 'راهنما محصولات واقعی را فهرست کرد');
+      coin.setSetting('purchaseMode', 'relative');
+      coin.setSetting('purchasePerAmount', 25000);
+      g = screenGuide('u9');
+      a(g.text.includes('25,000'), 'راهنما حالت نسبی را درست نوشت');
+      coin.setSetting('purchaseMode', 'fixed');
+      g = screenGuide('u9');
+      a(!g.text.includes('25,000'), 'راهنما با تغییر حالت به‌روز شد');
+      a(JSON.stringify(g.markup).includes('coin:shop'), 'راهنما دکمه فروشگاه دارد');
+
+      const mm = screenMenu('u9');
+      a(mm.text.includes('راهنما') || JSON.stringify(mm.markup).includes('coin:help'),
+        'دکمه راهنما در منو هست');
+      a(mm.markup.inline_keyboard.length === 5, 'منو پنج ردیف شد');
+
+      let hit = null;
+      await route({ data: 'coin:help', uid: 'u9', config: {}, chatId: 1, messageId: 2,
+                    editTelegram: async (c, ch, mi, t) => { hit = t; } });
+      a(hit && hit.includes('فاکس کوین چیست'), 'مسیریاب راهنما را شناخت');
     }
   } else {
     const tmp = fsx.mkdtempSync(pathx.join(os.tmpdir(), 'foxcoinui-'));
