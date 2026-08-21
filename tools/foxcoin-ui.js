@@ -122,6 +122,117 @@ function screenReferral(uid, botUsername) {
   return { text: text, markup: kb([[{ text: T.back, callback_data: 'coin' }]]) };
 }
 
+// ───────────────────────── فروشگاه کوینی ─────────────────────────
+
+function screenShop(uid) {
+  const items = coin.listProducts();
+  const bal = coin.getBalance(uid);
+  let text = '<b>' + T.shop + '</b>\n\nموجودی شما <code>' + fa(bal) + '</code> کوین\n';
+  if (!items.length) {
+    text += '\nهنوز محصولی برای خرید با کوین تعریف نشده است.';
+    return { text: text, markup: kb([[{ text: T.back, callback_data: 'coin' }]]) };
+  }
+  const rows = items.map(p => {
+    const afford = bal >= p.coins;
+    return [{ text: (afford ? '' : '🔒 ') + p.label + '  —  ' + fa(p.coins) + ' کوین',
+              callback_data: afford ? ('coin:buy:' + p.id) : 'coin:poor:' + p.id }];
+  });
+  rows.push([{ text: T.back, callback_data: 'coin' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+function screenConfirm(uid, pid) {
+  const p = coin.getProduct(pid);
+  if (!p) return screenError('این محصول دیگر موجود نیست.');
+  const bal = coin.getBalance(uid);
+  const text =
+    '<b>تأیید خرید</b>\n\n' +
+    'محصول\n' + p.label + '\n\n' +
+    (p.gb ? 'حجم\n<code>' + fa(p.gb) + '</code> گیگابایت\n\n' : '') +
+    (p.days ? 'مدت\n<code>' + fa(p.days) + '</code> روز\n\n' : '') +
+    'هزینه\n<code>' + fa(p.coins) + '</code> کوین\n\n' +
+    'موجودی بعد از خرید\n<code>' + fa(bal - p.coins) + '</code> کوین';
+  return { text: text, markup: kb([
+    [{ text: '✅ تأیید و دریافت', callback_data: 'coin:go:' + p.id, style: 'success' }],
+    [{ text: '⬅️ انصراف', callback_data: 'coin:shop' }],
+  ]) };
+}
+
+function screenPoor(uid, pid) {
+  const p = coin.getProduct(pid);
+  const need = p ? p.coins - coin.getBalance(uid) : 0;
+  return { text: '<b>موجودی کافی نیست</b>\n\nبرای این محصول <code>' +
+                 fa(need) + '</code> کوین دیگر لازم دارید.',
+           markup: kb([[{ text: T.back, callback_data: 'coin:shop' }]]) };
+}
+
+function screenError(msg) {
+  return { text: '❌ ' + msg,
+           markup: kb([[{ text: T.back, callback_data: 'coin:shop' }]]) };
+}
+
+// قفل ضد دوبار زدن. کلیک سریع دوباره نباید دو سرویس بسازد.
+const busy = new Set();
+
+/**
+ * اجرای خرید.
+ *
+ * ترتیب عمداً این است:
+ *   ۱. موجودی چک شود
+ *   ۲. سرویس ساخته شود
+ *   ۳. تازه بعد کوین کم شود
+ *
+ * اگر ساخت سرویس استثنا بدهد، هیچ کوینی کم نشده است.
+ * برعکسش خطرناک بود: کوین کم می‌شد و کاربر چیزی نمی‌گرفت.
+ */
+async function doPurchase(ctx, pid) {
+  const uid = String(ctx.uid);
+  const p = coin.getProduct(pid);
+  if (!p) return screenError('این محصول دیگر موجود نیست.');
+
+  const bal = coin.getBalance(uid);
+  if (bal < p.coins) return screenPoor(uid, pid);
+
+  if (busy.has(uid)) return screenError('یک درخواست شما در حال انجام است.');
+  busy.add(uid);
+  try {
+    const plans = await ctx.getPlans(ctx.env, p.cat);
+    const plan = (plans || []).find(x => String(x.id) === String(p.planId));
+    if (!plan) return screenError('پلن این محصول پیدا نشد. به پشتیبانی بگویید.');
+    if (!plan.inbounds || !plan.inbounds.length) {
+      return screenError('این پلن هنوز پیکربندی نشده است.');
+    }
+
+    const username = 'fox' + Math.random().toString(36).slice(2, 8);
+    let link = null;
+    try {
+      link = await ctx.deliverService(ctx.env, ctx.config, uid, {
+        desc: p.label, username: username, cat: p.cat,
+        inbounds: plan.inbounds, days: p.days || plan.days || 0,
+        gb: p.gb || 0, panelId: plan.panelId || null, planId: plan.id,
+      });
+    } catch (e) {
+      return screenError('ساخت سرویس انجام نشد. کوین شما کم نشد.\n<code>' +
+                         String(e && e.message || e).slice(0, 120) + '</code>');
+    }
+
+    const r = coin.addEvent(uid, 'spend', -p.coins,
+                            { product: p.id, plan: plan.id, link: link });
+    if (!r.ok) {
+      return screenError('سرویس ساخته شد ولی ثبت کوین انجام نشد. به پشتیبانی بگویید.');
+    }
+    return {
+      text: '<b>✅ انجام شد</b>\n\n' + p.label + ' برای شما صادر شد.\n\n' +
+            '<code>' + fa(p.coins) + '</code> کوین کم شد.\n' +
+            'موجودی جدید <code>' + fa(r.balance) + '</code> کوین\n\n' +
+            'مشخصات سرویس در پیام بعدی ارسال شد.',
+      markup: kb([[{ text: T.back, callback_data: 'coin' }]]),
+    };
+  } finally {
+    busy.delete(uid);
+  }
+}
+
 function screenSoon(title) {
   return {
     text: '<b>' + title + '</b>\n\n' + T.soon,
@@ -145,8 +256,11 @@ async function route(ctx) {
   else if (d === 'coin:bal') s = screenBalance(ctx.uid);
   else if (d === 'coin:hist') s = screenHistory(ctx.uid);
   else if (d === 'coin:ref') s = screenReferral(ctx.uid, ctx.botUsername);
-  else if (d === 'coin:shop') s = screenSoon(T.shop);
+  else if (d === 'coin:shop') s = screenShop(ctx.uid);
   else if (d === 'coin:miss') s = screenSoon(T.missions);
+  else if (d.startsWith('coin:poor:')) s = screenPoor(ctx.uid, d.slice(10));
+  else if (d.startsWith('coin:buy:')) s = screenConfirm(ctx.uid, d.slice(9));
+  else if (d.startsWith('coin:go:')) s = await doPurchase(ctx, d.slice(8));
   else return false;
 
   await ctx.editTelegram(ctx.config, ctx.chatId, ctx.messageId, s.text, s.markup);
@@ -156,8 +270,8 @@ async function route(ctx) {
 /** برچسب دکمه‌ای که در منوی اصلی ربات اضافه می‌شود. */
 const MENU_BUTTON = { text: T.title, callback_data: 'coin' };
 
-module.exports = { route, MENU_BUTTON, T,
-                   screenMenu, screenBalance, screenHistory, screenReferral };
+module.exports = { route, MENU_BUTTON, T, screenMenu, screenBalance,
+                   screenHistory, screenReferral, screenShop, screenConfirm };
 
 // ───────────────────────── خودآزمون ─────────────────────────
 
@@ -201,8 +315,63 @@ if (require.main === module) {
       return route({ data: 'other', uid: 'u9', editTelegram: fakeEdit });
     }).then(ok => {
       a(ok === false, 'رویداد بیگانه رد شد و به ربات واگذار شد');
+      return shopTests(a);
+    }).then(() => {
       console.log('\nهمه تست‌ها گذشتند.');
-    });
+    }).catch(e => { console.log('❌ ' + e.message); process.exit(1); });
+
+    async function shopTests(a) {
+      const fakePlans = async () => ([{ id: 'PL1', name: 'تست', panelId: 'PN1',
+                                        days: 30, inbounds: [{ id: 7 }] }]);
+      coin.addEvent('u9', 'admin', 500);
+
+      let sh = screenShop('u9');
+      a(sh.text.includes('هنوز محصولی'), 'فروشگاه خالی پیام درست دارد');
+
+      coin.setProduct({ id: 'P30', label: 'سی گیگ', planId: 'PL1',
+                        cat: 'volume', gb: 30, days: 30, coins: 100 });
+      coin.setProduct({ id: 'PBIG', label: 'گران', planId: 'PL1',
+                        cat: 'volume', gb: 300, days: 30, coins: 9999 });
+
+      sh = screenShop('u9');
+      a(JSON.stringify(sh.markup).includes('coin:buy:P30'), 'محصول قابل خرید دکمه خرید دارد');
+      a(JSON.stringify(sh.markup).includes('coin:poor:PBIG'), 'محصول گران قفل شد');
+
+      const cf = screenConfirm('u9', 'P30');
+      a(cf.text.includes('30'), 'صفحه تأیید حجم را نشان داد');
+      a(JSON.stringify(cf.markup).includes('coin:go:P30'), 'دکمه تأیید درست است');
+
+      // سناریوی حیاتی: ساخت سرویس شکست بخورد
+      const before = coin.getBalance('u9');
+      const failCtx = { uid: 'u9', env: {}, config: {}, getPlans: fakePlans,
+                        deliverService: async () => { throw new Error('پنل جواب نداد'); } };
+      const r1 = await doPurchase(failCtx, 'P30');
+      a(r1.text.includes('کوین شما کم نشد'), 'شکست سرویس پیام درست داد');
+      a(coin.getBalance('u9') === before, 'در شکست سرویس، کوین دست‌نخورده ماند');
+
+      // مسیر موفق
+      let got = null;
+      const okCtx = { uid: 'u9', env: {}, config: {}, getPlans: fakePlans,
+                      deliverService: async (e, c, uid, o) => { got = o; return 'https://sub/x'; } };
+      const r2 = await doPurchase(okCtx, 'P30');
+      a(r2.text.includes('انجام شد'), 'خرید موفق پیام درست داد');
+      a(coin.getBalance('u9') === before - 100, 'دقیقاً صد کوین کم شد');
+      a(got && got.gb === 30 && got.days === 30, 'حجم و مدت درست فرستاده شد');
+      a(got && got.inbounds.length === 1, 'اینباند پلن منتقل شد');
+      a(/^fox[a-z0-9]{5,6}$/.test(got.username), 'نام‌کاربری خودکار ساخته شد');
+      const last = coin.history('u9', 1)[0];
+      a(last.meta && last.meta.link === 'https://sub/x', 'لینک سرویس در دفتر ثبت شد');
+
+      // پلن ناموجود
+      const noPlan = { uid: 'u9', env: {}, config: {}, getPlans: async () => ([]),
+                       deliverService: async () => 'x' };
+      const r3 = await doPurchase(noPlan, 'P30');
+      a(r3.text.includes('پلن این محصول پیدا نشد'), 'پلن ناموجود گرفته شد');
+
+      // موجودی ناکافی
+      const r4 = await doPurchase(okCtx, 'PBIG');
+      a(r4.text.includes('کوین دیگر لازم'), 'موجودی ناکافی جلوی خرید را گرفت');
+    }
   } else {
     const tmp = fsx.mkdtempSync(pathx.join(os.tmpdir(), 'foxcoinui-'));
     const r = child.spawnSync(process.execPath, [__filename], {
