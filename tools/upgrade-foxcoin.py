@@ -3,7 +3,7 @@
 """
 ════════════════════════════════════════════════════════════════
  UPGRADE FOXCOIN — ارتقای هسته کوین به نسخه کامل (محصول + مدیریت)
- نسخه: 2.2 | 2026-08-22
+ نسخه: 2.3 | 2026-08-22 | + متن‌های سفارشی
 ════════════════════════════════════════════════════════════════
 
 چرا این اسکریپت:
@@ -209,6 +209,85 @@ REWARDS_TESTS_BLOCK = r'''    'const rw0=m.getRewards();',
     'a(m.removeRewardAction("join")===false,"پیش‌فرض حذف نمی‌شود");',
 '''
 
+# ── متن‌های سفارشی ───────────────────────────────────────────────
+TEXTS_BLOCK = r'''
+// ───────────────────────── متن‌های سفارشی ─────────────────────────
+
+/**
+ * متن‌های قابل ویرایش رابط کاربری. مقدار هر کدام از پنل مدیریت یا
+ * خط فرمان قابل تغییر است؛ متن ذخیره‌شده جای پیش‌فرض را می‌گیرد.
+ * جای‌نگهدار {dailyCap} در زمان نمایش با سقف روزانه واقعی پر می‌شود.
+ */
+const TEXTS = {
+  menu_note: '🎁 با فعالیت در ربات کوین جمع کنید و\nسرویس رایگان بگیرید.\n\n<i>برای شروع، راهنما را ببینید.</i>',
+  guide_what: 'یک امتیاز داخلی که با فعالیت در ربات جمع می‌شود و\nبا آن بدون پرداخت پول، سرویس می‌گیرید.',
+  guide_rules: '• سقف دریافت روزانه <code>{dailyCap}</code> کوین\n• هر فعالیت فقط یک‌بار جایزه دارد\n• کوین قابل انتقال به کاربر دیگر یا تبدیل به پول نیست',
+  guide_footer: 'همه رویدادها در گردش حساب ثبت می‌شود.',
+  earn_signup: 'ثبت‌نام در ربات',
+  earn_join: 'جوین کانال/گروه',
+  earn_purchase: 'خرید سرویس',
+  earn_mission: 'انجام ماموریت‌ها',
+  earn_referral: 'خرید دوستان دعوت‌شده',
+};
+
+/** متن‌ها با اولویت: ذخیره‌شده > پیش‌فرض. */
+function getTexts() {
+  const s = loadStore();
+  return Object.assign({}, TEXTS, s.texts || {});
+}
+
+/**
+ * ذخیره متن سفارشی. خالی یعنی برگشت به پیش‌فرض.
+ * برای امنیت پیام تلگرام، کاراکترهای < و > پذیرفته نمی‌شوند
+ * (متن نامعتبر HTML باعث خطای ارسال می‌شود).
+ */
+function setText(key, value) {
+  key = String(key);
+  if (!(key in TEXTS)) throw new Error('کلید متن ناشناخته: ' + key);
+  value = String(value == null ? '' : value).trim();
+  if (value.length > 1400) throw new Error('متن خیلی طولانی است (بیش از ۱۴۰۰ نویسه)');
+  if (/[<>]/.test(value)) throw new Error('در متن نباید کاراکتر < یا > باشد');
+  const s = loadStore();
+  s.texts = s.texts || {};
+  if (!value) delete s.texts[key];
+  else s.texts[key] = value;
+  saveStore(s);
+  return getTexts()[key];
+}
+
+/** برگشت به متن پیش‌فرض. */
+function resetText(key) {
+  const s = loadStore();
+  if (s.texts && key in s.texts) {
+    delete s.texts[key];
+    saveStore(s);
+  }
+  return getTexts()[key];
+}
+'''
+
+TEXTS_CLI_BLOCK = r'''    case 'texts':
+      return out(getTexts());
+    case 'text':
+      return out({ key: a, value: b === undefined ? getTexts()[a]
+                                                   : setText(a, [b, ...rest].join(' ')) });
+    case 'text-reset':
+      return out({ key: a, value: resetText(a) });
+'''
+
+TEXTS_TESTS_BLOCK = r'''    'a(m.getTexts().guide_what.includes("امتیاز داخلی"),"متن پیش‌فرض راهنما هست");',
+    'a(m.getTexts().earn_join==="جوین کانال/گروه","عنوان بخش جوین پیش‌فرض است");',
+    'm.setText("guide_what","متن سفارشی من");',
+    'a(m.getTexts().guide_what==="متن سفارشی من","متن سفارشی ذخیره شد");',
+    'a(m.setText("guide_what","")===m.TEXTS.guide_what,"خالی یعنی برگشت به پیش‌فرض");',
+    'a(m.resetText("guide_what")===m.TEXTS.guide_what,"ریست صریح هم کار می‌کند");',
+    'let badT=false; try{m.setText("guide_what","<b>بد</b>")}catch(e){badT=true} a(badT,"کاراکتر < رد شد");',
+    'let badK=false; try{m.setText("nope","x")}catch(e){badK=true} a(badK,"کلید ناشناخته رد شد");',
+'''
+
+TEXTS_EXPORTS_BLOCK = r'''  getTexts, setText, resetText, TEXTS,
+'''
+
 # ── فهرست همه قیمت‌های ثبت‌شده ────────────────────────────────────
 PRICES_BLOCK = r'''
 
@@ -365,6 +444,22 @@ STEPS = [
      "marker": "listProducts, getProduct, setProduct, removeProduct,",
      "anchor": "  claimMission, getCoinPrice, setCoinPrice, spendForPlan,",
      "where": "after", "add": "\n" + EXPORTS_BLOCK.rstrip("\n")},
+    {"name": "متن‌های سفارشی",
+     "marker": "function getTexts(",
+     "anchor": "// ───────────────────────── گزارش ─────────────────────────",
+     "where": "before", "add": TEXTS_BLOCK + "\n"},
+    {"name": "دستورهای متن",
+     "marker": "case 'texts':",
+     "anchor": "    case 'stats':",
+     "where": "before", "add": TEXTS_CLI_BLOCK},
+    {"name": "تست‌های متن",
+     "marker": "متن پیش‌فرض راهنما هست",
+     "anchor": "    'a(m.history(\"u1\",1)[0].type===\"spend\",\"آخرین رویداد خرج است\");',",
+     "where": "after", "add": "\n" + TEXTS_TESTS_BLOCK.rstrip("\n")},
+    {"name": "خروجی متن‌ها",
+     "marker": "getTexts, setText, resetText, TEXTS,",
+     "anchor": "  claimMission, getCoinPrice, setCoinPrice, spendForPlan,",
+     "where": "after", "add": "\n" + TEXTS_EXPORTS_BLOCK.rstrip("\n")},
 ]
 
 

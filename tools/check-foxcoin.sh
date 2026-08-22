@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ════════════════════════════════════════════════════════════════
 #  CHECK FOXCOIN — تشخیص وضعیت واقعی فایل‌های فاکس کوین روی سرور
-#  نسخه: 1.0 | 2026-08-22
+ 2026-08-22| 2026-08-22
 #
 #  چه چیزی را چک می‌کند:
 #    ۱. فایل‌های فاکس کوین در پوشه ربات هستند و نسخه‌شان چیست
@@ -77,6 +77,16 @@ if grep -q "REWARD_DEFAULTS" "$BOT_DIR/foxcoin.js" 2>/dev/null; then
   ok "foxcoin.js دارای جوایز فعالیت (نسخه جدید)"
 else
   bad "foxcoin.js جوایز ندارد (نسخه قدیمی)"
+fi
+if grep -q "TEXTS" "$BOT_DIR/foxcoin.js" 2>/dev/null; then
+  ok "foxcoin.js دارای متن‌های سفارشی (نسخه جدید)"
+else
+  bad "foxcoin.js متن‌های سفارشی ندارد (نسخه قدیمی)"
+fi
+if grep -q "admin:texts" "$BOT_DIR/foxcoin-admin.js" 2>/dev/null; then
+  ok "foxcoin-admin.js دارای بخش متن‌ها (نسخه جدید)"
+else
+  bad "foxcoin-admin.js بخش متن‌ها ندارد (نسخه قدیمی)"
 fi
 
 echo ""

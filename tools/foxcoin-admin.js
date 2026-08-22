@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.3.0 | 2026-08-22 | فاز ۳ + فاکس شاپ + دست بازتر + جوایز
+ *  نسخه: 1.4.0 | 2026-08-22 | فاز ۳ + فاکس شاپ + دست بازتر + جوایز + متن‌ها
  * ════════════════════════════════════════════════════════════════
  *
  *  این ماژول بخش مدیریت فاکس کوین است: آمار، تنظیمات، محصولات،
@@ -44,10 +44,45 @@ const T = {
   prices: '💵 قیمت پلن‌ها',
   ledger: '📜 دفتر کل',
   rewards: '🎁 جوایز فعالیت',
+  texts: '📝 متن‌ها',
   help: '❓ راهنما',
   back: '⬅️ بازگشت',
   coinMenu: '🪙 منوی کوین',
 };
+
+/** برچسب فارسی هر متن سفارشی، برای پنل. */
+const TEXTS_FA = {
+  menu_note: 'متن تشویقی منوی کوین',
+  guide_what: 'متن «فاکس کوین چیست»',
+  guide_rules: 'متن قوانین (با {dailyCap})',
+  guide_footer: 'سطر پایانی راهنما',
+  earn_signup: 'عنوان بخش ثبت‌نام',
+  earn_join: 'عنوان بخش جوین',
+  earn_purchase: 'عنوان بخش خرید',
+  earn_mission: 'عنوان بخش ماموریت',
+  earn_referral: 'عنوان بخش دعوت دوستان',
+};
+
+/**
+ * ویرایش‌های متن در انتظار: شناسه ادمین → کلید متن.
+ * این حالت فقط در حافظه است و پس از دریافت متن یا ۵ دقیقه پاک می‌شود.
+ * بستن درِ واقعی همچنان isAdmin است.
+ */
+const pendingEdits = new Map();
+
+function pendingText(uid) {
+  const p = pendingEdits.get(String(uid));
+  if (!p) return null;
+  if (Date.now() - p.at > 5 * 60 * 1000) {
+    pendingEdits.delete(String(uid));
+    return null;
+  }
+  return p;
+}
+
+function clearPending(uid) {
+  pendingEdits.delete(String(uid));
+}
 
 /** دلیل‌های از پیش تعریف‌شده برای تغییر موجودی (بدون نیاز به تایپ). */
 const REASONS = [
@@ -152,7 +187,7 @@ function screenMenu() {
     '🪙 کوین در گردش\n<code>' + fa(s.circulating) + '</code>\n\n' +
     '📊 مجموع رویدادها\n<code>' + fa(s.events) + '</code>\n\n' +
     '<i>هر تغییر با دکمه انجام می‌شود و در دفتر کل ثبت می‌شود.</i>\n\n' +
-    '<code>نسخه 1.3.0</code>';
+    '<code>نسخه 1.4.0</code>';
   return {
     text: text,
     markup: kb([
@@ -162,7 +197,8 @@ function screenMenu() {
        { text: T.users, callback_data: 'admin:users' }],
       [{ text: T.prices, callback_data: 'admin:prices' },
        { text: T.ledger, callback_data: 'admin:ledger' }],
-      [{ text: T.help, callback_data: 'admin:help', style: 'primary' }],
+      [{ text: T.texts, callback_data: 'admin:texts' },
+       { text: T.help, callback_data: 'admin:help', style: 'primary' }],
       [{ text: T.coinMenu, callback_data: 'coin' }],
     ]),
   };
@@ -312,6 +348,93 @@ function resetReward(key) {
 function deleteReward(key) {
   coin.removeRewardAction(key);
   return screenRewards();
+}
+
+// ───────────────────────── متن‌ها ─────────────────────────
+
+function previewText(s, n) {
+  s = String(s == null ? '' : s);
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+/**
+ * فهرست همه متن‌های قابل ویرایش. متن سفارشی با 🟢 نشان داده می‌شود
+ * و دکمه «↩️ پیش‌فرض» می‌گیرد. «✏️» حالت دریافت متن را فعال می‌کند.
+ */
+function screenTexts() {
+  const txt = coin.getTexts();
+  let text = '<b>' + T.texts + '</b>\n' + LINE + '\n\n' +
+             '<i>متن‌هایی که کاربر در بخش‌های فاکس کوین می‌بیند.\n' +
+             'روی هر آیتم بزنید، سپس متن جدید را بفرستید.\n' +
+             '🟢 یعنی متن سفارشی (غیر از پیش‌فرض).</i>\n';
+  const rows = [];
+  for (const key of Object.keys(coin.TEXTS)) {
+    const label = TEXTS_FA[key] || key;
+    const val = txt[key];
+    const custom = val !== coin.TEXTS[key];
+    const btn = {
+      text: (custom ? '🟢 ' : '') + label + '\n<i>' + previewText(val, 40) + '</i>',
+      callback_data: 'admin:tedit:' + key,
+    };
+    rows.push(custom
+      ? [btn, { text: '↩️ پیش‌فرض', callback_data: 'admin:treset:' + key }]
+      : [btn]);
+  }
+  rows.push([{ text: T.back, callback_data: 'admin' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+/** فعال‌کردن حالت دریافت متن برای همین ادمین + نمایش راهنما. */
+function screenTextEdit(uid, key) {
+  key = String(key);
+  if (!(key in coin.TEXTS)) return screenTexts();
+  const txt = coin.getTexts();
+  const label = TEXTS_FA[key] || key;
+  const cur = txt[key];
+  const isCustom = cur !== coin.TEXTS[key];
+  pendingEdits.set(String(uid), {
+    key: key, at: Date.now(),
+    prompt: '📝 ' + label + ' — متن جدید را بفرست.\n' +
+            '<i>فعلی: ' + previewText(cur, 80) + '</i>',
+  });
+  return {
+    text: '<b>📝 ' + label + '</b>\n' + LINE + '\n\n' +
+          'متن فعلی\n<i>' + previewText(cur, 220) + '</i>\n\n' +
+          (isCustom ? '🟢 سفارشی' : '⚪️ پیش‌فرض') + '\n\n' +
+          '<b>متن جدید را همین‌جا بفرست.</b>\n' +
+          '<i>بدون < یا > — حداکثر ۱۴۰۰ نویسه.\n' +
+          'اگر پیام «متن را بفرست» نیامد، از خط فرمان:\n' +
+          '<code>node foxcoin.js text ' + key + ' <متن></code></i>',
+    markup: kb([
+      [{ text: '↩️ برگشت به پیش‌فرض', callback_data: 'admin:treset:' + key }],
+      [{ text: '🔙 انصراف', callback_data: 'admin:tcancel' }],
+    ]),
+  };
+}
+
+function resetTextScreen(key) {
+  coin.resetText(key);
+  return screenTexts();
+}
+
+/**
+ * دریافت متن ارسال‌شده توسط ادمین (هوک bot.js این را صدا می‌زند).
+ * فقط اگر ادمین باشد و حالت ویرایش فعال باشد، ذخیره می‌شود.
+ */
+async function routeText(ctx) {
+  const uid = String(ctx && ctx.uid);
+  if (!isAdmin(ctx && ctx.config, uid)) return false;
+  const pending = pendingText(uid);
+  if (!pending) return false;
+  const text = String(ctx && ctx.text || '').trim();
+  if (!text || text === '/cancel') return false;
+  try {
+    coin.setText(pending.key, text);
+  } catch (e) {
+    return false;
+  }
+  clearPending(uid);
+  return true;
 }
 
 function screenSetting(key) {
@@ -1183,6 +1306,7 @@ const P = {
   allusers: 'admin:allusers:',
   rcoins: 'admin:rcoins:', rcoinsv: 'admin:rcoinsv:',
   rreset: 'admin:rreset:', rdel: 'admin:rdel:',
+  tedit: 'admin:tedit:', treset: 'admin:treset:',
   user: 'admin:user:', uhist: 'admin:uhist:',
   grant: 'admin:grant:', grantv: 'admin:grantv:', grantgo: 'admin:grantgo:',
   revoke: 'admin:revoke:', revokev: 'admin:revokev:',
@@ -1253,7 +1377,13 @@ async function route(ctx) {
     s = applyReward(k, v);
   } else if (d.startsWith(P.rreset)) s = resetReward(after(d, P.rreset));
   else if (d.startsWith(P.rdel)) s = deleteReward(after(d, P.rdel));
-  else if (d === 'admin:prices') s = screenPrices();
+  else if (d === 'admin:texts') s = screenTexts();
+  else if (d.startsWith(P.tedit)) s = screenTextEdit(ctx.uid, after(d, P.tedit));
+  else if (d.startsWith(P.treset)) s = resetTextScreen(after(d, P.treset));
+  else if (d === 'admin:tcancel') {
+    clearPending(ctx.uid);
+    s = screenTexts();
+  } else if (d === 'admin:prices') s = screenPrices();
   else if (d === 'admin:ledger') s = screenLedger();
   else if (d === 'admin:help') s = screenHelp();
   else if (d.startsWith(P.set)) s = screenSetting(after(d, P.set));
@@ -1323,10 +1453,12 @@ function adminMenuRows(opts) {
     : [];
 }
 
-module.exports = { route, isAdmin, adminMenuRows, T,
+module.exports = { route, routeText, pendingText, clearPending,
+                   isAdmin, adminMenuRows, T,
                    screenMenu, screenStats, screenSettings, screenProducts,
                    screenUsers, screenAllUsers, screenPrices, screenLedger,
-                   screenRewards, screenHelp, doGrant, doRevoke, doSetBal };
+                   screenRewards, screenTexts, screenHelp, doGrant, doRevoke,
+                   doSetBal };
 
 // ───────────────────────── خودآزمون ─────────────────────────
 
@@ -1539,6 +1671,38 @@ if (require.main === module) {
       a(!('daily' in coin.getRewards()), 'فعالیت سفارشی حذف شد');
       await go('admin:rdel:join');
       a(coin.getRewards().join === 10, 'پیش‌فرض با حذف حذف نمی‌شود');
+
+      // ── متن‌ها
+      await go('admin:texts');
+      a(sent.text.includes('متن‌هایی که کاربر'), 'صفحه متن‌ها باز شد');
+      a(JSON.stringify(sent.markup).includes('admin:tedit:menu_note') &&
+        JSON.stringify(sent.markup).includes('متن تشویقی'),
+        'دکمه ویرایش متن با برچسب درست هست');
+      await go('admin:tedit:menu_note');
+      a(sent.text.includes('متن جدید را همین‌جا بفرست'), 'حالت ویرایش متن باز شد');
+      const pend = pendingText('u9');
+      a(pend && pend.key === 'menu_note', 'حالت ویرایش برای ادمین ثبت شد');
+      a(await routeText({ uid: 'u9', config: { admins: ['u9'] },
+                          text: 'متن جدید من' }) === true, 'متن دریافتی ذخیره شد');
+      a(coin.getTexts().menu_note === 'متن جدید من', 'متن سفارشی در هسته ثبت شد');
+      a(pendingText('u9') === null, 'پس از ذخیره، حالت پاک شد');
+      a(await routeText({ uid: 'u9', config: { admins: ['u9'] },
+                          text: 'بدون حالت' }) === false,
+        'بدون حالت فعال، متن پذیرفته نمی‌شود');
+      a(await routeText({ uid: 'u7', config: { admins: ['u9'] },
+                          text: 'x' }) === false, 'غیرادمین نمی‌تواند متن بفرستد');
+      await go('admin:tedit:guide_what');
+      await go('admin:tcancel');
+      a(pendingText('u9') === null, 'انصراف حالت را پاک کرد');
+      await go('admin:treset:menu_note');
+      a(coin.getTexts().menu_note === coin.TEXTS.menu_note,
+        'برگشت به پیش‌فرض کار کرد');
+      await go('admin:tedit:guide_what');
+      a(await routeText({ uid: 'u9', config: { admins: ['u9'] },
+                          text: '<b>x</b>' }) === false, 'متن با < پذیرفته نشد');
+      a(coin.getTexts().guide_what === coin.TEXTS.guide_what,
+        'متن نامعتبر ذخیره نشد');
+      await go('admin:tcancel');
 
       // ── دفتر کل و مسیر ناشناخته
       await go('admin:ledger');

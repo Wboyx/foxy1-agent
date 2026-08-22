@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN UI — رابط کاربری کوین
- *  نسخه: 1.2.0 | 2026-08-22 | فاز ۲ + سوئیچ فروشگاه + جوایز زنده (بدون دعوت)
+ *  نسخه: 1.3.0 | 2026-08-22 | فاز ۲ + فروشگاه + جوایز زنده + متن‌های سفارشی
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا ماژول جدا:
@@ -65,6 +65,7 @@ function screenMenu(uid) {
   const bal = coin.getBalance(uid);
   const items = coin.listProducts();
   const cheapest = items.length ? items[0].coins : null;
+  const txt = coin.getTexts();
   const text =
     '<b>' + T.title + '</b>\n' +
     'سکه اختصاصی فاکس شاپ\n' + LINE + '\n\n' +
@@ -76,10 +77,8 @@ function screenMenu(uid) {
           : '📈 برای ارزان‌ترین سرویس <code>' + fa(cheapest - bal) +
             '</code> کوین دیگر لازم دارید.\n\n')
       : '') +
-    '🎁 با فعالیت در ربات کوین جمع کنید و\n' +
-    'سرویس رایگان بگیرید.\n\n' +
-    '<i>برای شروع، راهنما را ببینید.</i>\n\n' +
-    '<code>نسخه 1.2.0</code>';
+    txt.menu_note + '\n\n' +
+    '<code>نسخه 1.3.0</code>';
   return {
     text: text,
     markup: kb([
@@ -103,23 +102,27 @@ function screenGuide(uid) {
   const c = coin.getSettings();
   const rw = coin.getRewards();
   const items = coin.listProducts();
+  const txt = coin.getTexts();
   const earn = [];
   if (rw.signup > 0) {
-    earn.push('• ثبت‌نام در ربات\n   <code>' + fa(rw.signup) + '</code> کوین، یک‌بار');
+    earn.push('• ' + txt.earn_signup + '\n   <code>' + fa(rw.signup) +
+              '</code> کوین، یک‌بار');
   }
   if (rw.join > 0) {
-    earn.push('• جوین کانال/گروه\n   <code>' + fa(rw.join) + '</code> کوین، یک‌بار');
+    earn.push('• ' + txt.earn_join + '\n   <code>' + fa(rw.join) +
+              '</code> کوین، یک‌بار');
   }
   earn.push(c.purchaseMode === 'relative'
-    ? '• خرید سرویس\n   هر <code>' + fa(c.purchasePerAmount) +
+    ? '• ' + txt.earn_purchase + '\n   هر <code>' + fa(c.purchasePerAmount) +
       '</code> تومان، <code>1</code> کوین'
-    : '• خرید سرویس\n   هر خرید <code>' + fa(c.purchaseFixed) + '</code> کوین');
+    : '• ' + txt.earn_purchase + '\n   هر خرید <code>' +
+      fa(c.purchaseFixed) + '</code> کوین');
   if (rw.referral > 0) {
-    earn.push('• خرید دوستان دعوت‌شده\n   هر خرید <code>' +
+    earn.push('• ' + txt.earn_referral + '\n   هر خرید <code>' +
               fa(rw.referral) + '</code> کوین');
   }
   if (rw.mission > 0) {
-    earn.push('• انجام ماموریت‌ها\n   هر ماموریت <code>' +
+    earn.push('• ' + txt.earn_mission + '\n   هر ماموریت <code>' +
               fa(rw.mission) + '</code> کوین');
   }
 
@@ -132,16 +135,12 @@ function screenGuide(uid) {
 
   const text =
     '<b>' + T.guide + ' فاکس کوین</b>\n' + LINE + '\n\n' +
-    '<b>فاکس کوین چیست</b>\n' +
-    'یک امتیاز داخلی که با فعالیت در ربات جمع می‌شود و\n' +
-    'با آن بدون پرداخت پول، سرویس می‌گیرید.\n\n' +
+    '<b>فاکس کوین چیست</b>\n' + txt.guide_what + '\n\n' +
     '<b>چطور کوین بگیرم</b>\n' + earn.join('\n') + '\n\n' +
     '<b>با کوین چه بگیرم</b>\n' + spend + '\n\n' +
     '<b>قوانین</b>\n' +
-    '• سقف دریافت روزانه <code>' + fa(c.dailyCap) + '</code> کوین\n' +
-    '• هر فعالیت فقط یک‌بار جایزه دارد\n' +
-    '• کوین قابل انتقال به کاربر دیگر یا تبدیل به پول نیست\n\n' +
-    '<i>همه رویدادها در گردش حساب ثبت می‌شود.</i>';
+    txt.guide_rules.replace('{dailyCap}', fa(c.dailyCap)) + '\n\n' +
+    '<i>' + txt.guide_footer + '</i>';
   return { text: text, markup: kb([
     [{ text: T.shop, callback_data: 'coin:shop', style: 'success' }],
     [{ text: T.back, callback_data: 'coin' }],
@@ -484,6 +483,25 @@ if (require.main === module) {
       g = screenGuide('u9');
       a(!g.text.includes('25,000'), 'راهنما با تغییر حالت به‌روز شد');
       a(JSON.stringify(g.markup).includes('coin:shop'), 'راهنما دکمه فروشگاه دارد');
+
+      // ── متن‌های سفارشی
+      coin.setText('guide_what', 'متن کاملاً سفارشی');
+      coin.setText('earn_join', 'عضو کانال شدن');
+      g = screenGuide('u9');
+      a(g.text.includes('متن کاملاً سفارشی'), 'راهنمای سفارشی جای پیش‌فرض را گرفت');
+      a(g.text.includes('عضو کانال شدن'), 'عنوان بخش جوین سفارشی شد');
+      a(!g.text.includes('جوین کانال/گروه'), 'عنوان پیش‌فرض جوین حذف شد');
+      coin.setText('guide_rules', 'سقف روزانه {dailyCap} کوین است');
+      g = screenGuide('u9');
+      a(g.text.includes('سقف روزانه 333 کوین است'), 'جای‌نگهدار سقف روزانه پر شد');
+      coin.setText('menu_note', 'متن منوی اختصاصی');
+      const m3 = screenMenu('u9');
+      a(m3.text.includes('متن منوی اختصاصی'), 'متن تشویقی منو سفارشی شد');
+      coin.resetText('guide_what');
+      coin.resetText('earn_join');
+      coin.resetText('guide_rules');
+      coin.resetText('menu_note');
+      a(screenMenu('u9').text.includes('نسخه 1.3.0'), 'نسخه جدید در منو نمایش داده شد');
 
       const mm = screenMenu('u9');
       a(mm.text.includes('راهنما') || JSON.stringify(mm.markup).includes('coin:help'),

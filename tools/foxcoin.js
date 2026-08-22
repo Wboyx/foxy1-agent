@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN — هسته اقتصاد کوین
- *  نسخه: 1.4.0 | 2026-08-22 | فاز ۱ + محصول + مدیریت + فروشگاه + جوایز
+ *  نسخه: 1.5.0 | 2026-08-22 | فاز ۱ + محصول + مدیریت + فروشگاه + جوایز + متن‌ها
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا فایل جدا:
@@ -291,6 +291,60 @@ function getCoinPrice(planId) {
   return (v === undefined || v === null) ? null : Number(v);
 }
 
+// ───────────────────────── متن‌های سفارشی ─────────────────────────
+
+/**
+ * متن‌های قابل ویرایش رابط کاربری. مقدار هر کدام از پنل مدیریت یا
+ * خط فرمان قابل تغییر است؛ متن ذخیره‌شده جای پیش‌فرض را می‌گیرد.
+ * جای‌نگهدار {dailyCap} در زمان نمایش با سقف روزانه واقعی پر می‌شود.
+ */
+const TEXTS = {
+  menu_note: '🎁 با فعالیت در ربات کوین جمع کنید و\nسرویس رایگان بگیرید.\n\n<i>برای شروع، راهنما را ببینید.</i>',
+  guide_what: 'یک امتیاز داخلی که با فعالیت در ربات جمع می‌شود و\nبا آن بدون پرداخت پول، سرویس می‌گیرید.',
+  guide_rules: '• سقف دریافت روزانه <code>{dailyCap}</code> کوین\n• هر فعالیت فقط یک‌بار جایزه دارد\n• کوین قابل انتقال به کاربر دیگر یا تبدیل به پول نیست',
+  guide_footer: 'همه رویدادها در گردش حساب ثبت می‌شود.',
+  earn_signup: 'ثبت‌نام در ربات',
+  earn_join: 'جوین کانال/گروه',
+  earn_purchase: 'خرید سرویس',
+  earn_mission: 'انجام ماموریت‌ها',
+  earn_referral: 'خرید دوستان دعوت‌شده',
+};
+
+/** متن‌ها با اولویت: ذخیره‌شده > پیش‌فرض. */
+function getTexts() {
+  const s = loadStore();
+  return Object.assign({}, TEXTS, s.texts || {});
+}
+
+/**
+ * ذخیره متن سفارشی. خالی یعنی برگشت به پیش‌فرض.
+ * برای امنیت پیام تلگرام، کاراکترهای < و > پذیرفته نمی‌شوند
+ * (متن نامعتبر HTML باعث خطای ارسال می‌شود).
+ */
+function setText(key, value) {
+  key = String(key);
+  if (!(key in TEXTS)) throw new Error('کلید متن ناشناخته: ' + key);
+  value = String(value == null ? '' : value).trim();
+  if (value.length > 1400) throw new Error('متن خیلی طولانی است (بیش از ۱۴۰۰ نویسه)');
+  if (/[<>]/.test(value)) throw new Error('در متن نباید کاراکتر < یا > باشد');
+  const s = loadStore();
+  s.texts = s.texts || {};
+  if (!value) delete s.texts[key];
+  else s.texts[key] = value;
+  saveStore(s);
+  return getTexts()[key];
+}
+
+/** برگشت به متن پیش‌فرض. */
+function resetText(key) {
+  const s = loadStore();
+  if (s.texts && key in s.texts) {
+    delete s.texts[key];
+    saveStore(s);
+  }
+  return getTexts()[key];
+}
+
 function setCoinPrice(planId, coins) {
   const s = loadStore();
   s.coinPrices = s.coinPrices || {};
@@ -470,6 +524,13 @@ function cli() {
       return out({ key: a, coins: addRewardAction(a, Number(b)) });
     case 'reward-del':
       return out({ removed: removeRewardAction(a) });
+    case 'texts':
+      return out(getTexts());
+    case 'text':
+      return out({ key: a, value: b === undefined ? getTexts()[a]
+                                                   : setText(a, [b, ...rest].join(' ')) });
+    case 'text-reset':
+      return out({ key: a, value: resetText(a) });
     case 'stats':
       return out(stats());
     case 'products':
@@ -512,6 +573,9 @@ function cli() {
         '  node foxcoin.js reward <کلید> [کوین]',
         '  node foxcoin.js reward-add <کلید> <کوین>',
         '  node foxcoin.js reward-del <کلید>',
+        '  node foxcoin.js texts',
+        '  node foxcoin.js text <کلید> <متن>',
+        '  node foxcoin.js text-reset <کلید>',
       ].join('\n'));
   }
 }
@@ -583,6 +647,14 @@ function selftest() {
     'a(m.grantReward("u1","daily").ok,"جایزه فعالیت سفارشی داده شد");',
     'a(m.removeRewardAction("daily")===true,"فعالیت سفارشی حذف شد");',
     'a(m.removeRewardAction("join")===false,"پیش‌فرض حذف نمی‌شود");',
+    'a(m.getTexts().guide_what.includes("امتیاز داخلی"),"متن پیش‌فرض راهنما هست");',
+    'a(m.getTexts().earn_join==="جوین کانال/گروه","عنوان بخش جوین پیش‌فرض است");',
+    'm.setText("guide_what","متن سفارشی من");',
+    'a(m.getTexts().guide_what==="متن سفارشی من","متن سفارشی ذخیره شد");',
+    'a(m.setText("guide_what","")===m.TEXTS.guide_what,"خالی یعنی برگشت به پیش‌فرض");',
+    'a(m.resetText("guide_what")===m.TEXTS.guide_what,"ریست صریح هم کار می‌کند");',
+    'let badT=false; try{m.setText("guide_what","<b>بد</b>")}catch(e){badT=true} a(badT,"کاراکتر < رد شد");',
+    'let badK=false; try{m.setText("nope","x")}catch(e){badK=true} a(badK,"کلید ناشناخته رد شد");',
     'console.log("\\nهمه تست‌ها گذشتند.");',
   ].join('\n');
   const f = path.join(tmp, 't.js');
@@ -602,6 +674,7 @@ module.exports = {
   listProducts, getProduct, setProduct, removeProduct,
   topHolders, recentUsers, ledgerRecent, userList,
   getRewards, setReward, addRewardAction, removeRewardAction, grantReward,
+  getTexts, setText, resetText, TEXTS,
   history, stats, readLedger, DEFAULTS, EVENTS, REWARD_DEFAULTS,
 };
 
