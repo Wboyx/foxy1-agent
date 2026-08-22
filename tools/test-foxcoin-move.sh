@@ -14,9 +14,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 SRC_BOT=""
-for cand in ../for-mehti/foxteam-bot/bot.js \
-            ../../for-mehti/foxteam-bot/bot.js \
-            /home/user/repos/for-mehti/foxteam-bot/bot.js; do
+for cand in /home/user/repos/_ref/foxteam-bot/bot.js \
+            ../_ref/foxteam-bot/bot.js \
+            ../../_ref/foxteam-bot/bot.js \
+            ../for-mehti/foxteam-bot/bot.js \
+            ../../for-mehti/foxteam-bot/bot.js; do
   [ -f "$cand" ] && SRC_BOT="$cand" && break
 done
 if [ -z "$SRC_BOT" ]; then
