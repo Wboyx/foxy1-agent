@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN UI — رابط کاربری کوین
- *  نسخه: 1.0.0 | 2026-08-21 | فاز ۲
+ *  نسخه: 1.1.0 | 2026-08-22 | فاز ۲ + سوئیچ باز/بسته فروشگاه
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا ماژول جدا:
@@ -209,6 +209,16 @@ function screenReferral(uid, botUsername) {
 function screenShop(uid) {
   const items = coin.listProducts();
   const bal = coin.getBalance(uid);
+  const c = coin.getSettings();
+  if (!c.shopEnabled) {
+    return {
+      text: '<b>' + T.shop + '</b>\n' + LINE + '\n\n' +
+            '⛔ فروشگاه در حال حاضر <b>بسته</b> است.\n\n' +
+            '🪙 موجودی شما <code>' + fa(bal) + '</code> کوین محفوظ است.\n' +
+            '<i>به‌زودی باز می‌شود.</i>',
+      markup: kb([[{ text: T.back, callback_data: 'coin' }]]),
+    };
+  }
   let text = '<b>' + T.shop + '</b>\n' + LINE + '\n\n' +
              '💰 موجودی شما <code>' + fa(bal) + '</code> کوین\n\n' +
              '<i>پس از تأیید، سرویس بلافاصله ساخته می‌شود.</i>\n';
@@ -275,6 +285,9 @@ async function doPurchase(ctx, pid) {
   const uid = String(ctx.uid);
   const p = coin.getProduct(pid);
   if (!p) return screenError('این محصول دیگر موجود نیست.');
+  if (!coin.getSettings().shopEnabled) {
+    return screenError('فروشگاه در حال حاضر بسته است.');
+  }
 
   const bal = coin.getBalance(uid);
   if (bal < p.coins) return screenPoor(uid, pid);
@@ -460,6 +473,18 @@ if (require.main === module) {
       // موجودی ناکافی
       const r4 = await doPurchase(okCtx, 'PBIG');
       a(r4.text.includes('کوین دیگر لازم'), 'موجودی ناکافی جلوی خرید را گرفت');
+
+      // ── فروشگاه بسته
+      coin.setSetting('shopEnabled', false);
+      let cs = screenShop('u9');
+      a(cs.text.includes('بسته'), 'فروشگاه بسته پیام درست دارد');
+      a(!JSON.stringify(cs.markup).includes('coin:buy'), 'فروشگاه بسته دکمه خرید ندارد');
+      const r5 = await doPurchase(okCtx, 'P30');
+      a(r5.text.includes('بسته است'), 'خرید در فروشگاه بسته متوقف شد');
+      a(coin.getBalance('u9') === before - 100, 'موجودی در فروشگاه بسته دست نخورد');
+      coin.setSetting('shopEnabled', true);
+      cs = screenShop('u9');
+      a(cs.text.includes('موجودی شما'), 'فروشگاه باز دوباره عادی شد');
 
       // ── راهنمای زنده
       coin.setSetting('referralReward', 17);

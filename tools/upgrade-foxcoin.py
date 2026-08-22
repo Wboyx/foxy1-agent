@@ -3,7 +3,7 @@
 """
 ════════════════════════════════════════════════════════════════
  UPGRADE FOXCOIN — ارتقای هسته کوین به نسخه کامل (محصول + مدیریت)
- نسخه: 2.0 | 2026-08-22
+ نسخه: 2.1 | 2026-08-22
 ════════════════════════════════════════════════════════════════
 
 چرا این اسکریپت:
@@ -94,6 +94,11 @@ function removeProduct(id) {
 }
 '''
 
+# ── سوئیچ باز/بسته فروشگاه ───────────────────────────────────────
+SHOP_BLOCK = r'''
+  shopEnabled: true,          // فروشگاه کوینی باز/بسته
+'''
+
 # ── فهرست همه قیمت‌های ثبت‌شده ────────────────────────────────────
 PRICES_BLOCK = r'''
 
@@ -170,6 +175,10 @@ TESTS_BLOCK = r'''    'm.setProduct({id:"x1",label:"سی گیگ",planId:"44trir5
     'a(m.recentUsers(3)[0]==="u1","کاربران اخیر پیدا شدند");',
     'a(m.ledgerRecent(3)[0].type==="spend","دفتر اخیر آخرین رویداد را اول می‌آورد");',
     'a(m.getCoinPrices().p1===50,"فهرست قیمت‌ها درست است");',
+    'a(m.getSettings().shopEnabled===true,"فروشگاه کوینی پیش‌فرض باز است");',
+    'm.setSetting("shopEnabled",false);',
+    'a(m.getSettings().shopEnabled===false,"فروشگاه بسته شد");',
+    'm.setSetting("shopEnabled",true);',
 '''
 
 EXPORTS_BLOCK = r'''  getCoinPrices,
@@ -179,6 +188,10 @@ EXPORTS_BLOCK = r'''  getCoinPrices,
 
 # هر قدم: نشانه (اگر باشد یعنی قبلاً اضافه شده)، لنگرگاه، کجا، متن
 STEPS = [
+    {"name": "سوئیچ باز/بسته فروشگاه",
+     "marker": "shopEnabled",
+     "anchor": "  dailyCap: 200,              // سقف کوین دریافتی هر کاربر در روز",
+     "where": "after", "add": SHOP_BLOCK},
     {"name": "بخش محصول کوینی",
      "marker": "function listProducts(",
      "anchor": "// ───────────────────────── گزارش ─────────────────────────",

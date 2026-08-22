@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN — هسته اقتصاد کوین
- *  نسخه: 1.1.0 | 2026-08-22 | فاز ۱ + محصول + مدیریت
+ *  نسخه: 1.2.0 | 2026-08-22 | فاز ۱ + محصول + مدیریت + فروشگاه
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا فایل جدا:
@@ -43,6 +43,7 @@ const DEFAULTS = {
   referralReward: 10,         // کوین بابت خرید زیرمجموعه
   signupReward: 5,            // جایزه ثبت‌نام
   dailyCap: 200,              // سقف کوین دریافتی هر کاربر در روز
+  shopEnabled: true,          // فروشگاه کوینی باز/بسته
   reportChatId: '',           // گروه گزارش
   reportEvents: 'all',        // all یا money
 };
@@ -349,8 +350,13 @@ function cli() {
       return out(history(a, Number(b) || 20));
     case 'settings':
       return out(getSettings());
-    case 'set':
-      return out(setSetting(a, isNaN(Number(b)) ? b : Number(b)));
+    case 'set': {
+      let v = b;
+      if (v === 'true') v = true;
+      else if (v === 'false') v = false;
+      else if (v !== '' && !isNaN(Number(v))) v = Number(v);
+      return out(setSetting(a, v));
+    }
     case 'price':
       return out({ plan: a, coins: b === undefined ? getCoinPrice(a)
                                                    : setCoinPrice(a, Number(b)) });
@@ -405,6 +411,10 @@ function selftest() {
     'const m=require(' + JSON.stringify(__filename) + ');',
     'const a=(c,m2)=>{if(!c){console.log("❌ "+m2);process.exit(1);}console.log("✅ "+m2);};',
     'm.setSetting("dailyCap",100);',
+    'a(m.getSettings().shopEnabled===true,"فروشگاه کوینی پیش‌فرض باز است");',
+    'm.setSetting("shopEnabled",false);',
+    'a(m.getSettings().shopEnabled===false,"فروشگاه بسته شد");',
+    'm.setSetting("shopEnabled",true);',
     'a(m.getBalance("u1")===0,"موجودی اولیه صفر است");',
     'a(m.addEvent("u1","signup",5).ok,"جایزه ثبت‌نام ثبت شد");',
     'a(m.getBalance("u1")===5,"موجودی به ۵ رسید");',
