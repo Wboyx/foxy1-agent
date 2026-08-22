@@ -83,10 +83,25 @@ if grep -q "TEXTS" "$BOT_DIR/foxcoin.js" 2>/dev/null; then
 else
   bad "foxcoin.js متن‌های سفارشی ندارد (نسخه قدیمی)"
 fi
+if grep -q "setRewardConfig" "$BOT_DIR/foxcoin.js" 2>/dev/null; then
+  ok "foxcoin.js دارای موتور جوایز پیشرفته (درصدی/نسبی/سقف/زنجیره)"
+else
+  bad "foxcoin.js موتور جوایز پیشرفته ندارد (نسخه قدیمی)"
+fi
 if grep -q "admin:texts" "$BOT_DIR/foxcoin-admin.js" 2>/dev/null; then
   ok "foxcoin-admin.js دارای بخش متن‌ها (نسخه جدید)"
 else
   bad "foxcoin-admin.js بخش متن‌ها ندارد (نسخه قدیمی)"
+fi
+if grep -q "admin:rrep" "$BOT_DIR/foxcoin-admin.js" 2>/dev/null; then
+  ok "foxcoin-admin.js دارای ویرایشگر کامل جوایز (حالت/تکرار/فعال‌سازی)"
+else
+  bad "foxcoin-admin.js ویرایشگر کامل جوایز ندارد (نسخه قدیمی)"
+fi
+if grep -q "coin:daily" "$BOT_DIR/foxcoin-ui.js" 2>/dev/null; then
+  ok "foxcoin-ui.js دارای دکمه جایزه روزانه (نسخه جدید)"
+else
+  bad "foxcoin-ui.js دکمه جایزه روزانه ندارد (نسخه قدیمی)"
 fi
 
 echo ""

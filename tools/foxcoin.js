@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN — هسته اقتصاد کوین
- *  نسخه: 1.5.0 | 2026-08-22 | فاز ۱ + محصول + مدیریت + فروشگاه + جوایز + متن‌ها
+ *  نسخه: 1.6.0 | 2026-08-22 | موتور جوایز پیشرفته (ثابت/درصدی/نسبی + سقف + زنجیره روزانه)
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا فایل جدا:
@@ -33,7 +33,7 @@ const STORE = path.join(DATA_DIR, 'coin-store.json');
 const LEDGER = path.join(DATA_DIR, 'coin-ledger.jsonl');
 
 const EVENTS = ['signup', 'mission', 'purchase', 'referral',
-                'spend', 'admin', 'reset', 'join'];
+                'spend', 'admin', 'reset', 'join', 'daily', 'first_purchase'];
 
 const DEFAULTS = {
   enabled: true,
@@ -175,15 +175,6 @@ function addEvent(uid, type, amount, meta) {
 
 // ───────────────────────── قواعد اقتصاد ─────────────────────────
 
-function coinsForPurchase(tomanAmount) {
-  const c = getSettings();
-  if (c.purchaseMode === 'relative') {
-    const per = Math.max(1, Number(c.purchasePerAmount) || 10000);
-    return Math.floor(Number(tomanAmount || 0) / per);
-  }
-  return Math.max(0, Number(c.purchaseFixed) || 0);
-}
-
 /** جایزه ماموریت. هر ماموریت برای هر کاربر فقط یک بار. */
 function claimMission(uid, missionId, reward) {
   const key = String(uid) + ':' + String(missionId);
@@ -203,38 +194,107 @@ function claimMission(uid, missionId, reward) {
 
 // ───────────────────────── جوایز فعالیت ─────────────────────────
 
-/** جوایز پیش‌فرض هر فعالیت. مقدار هر کدام از پنل مدیریت قابل تغییر است. */
-const REWARD_DEFAULTS = { signup: 5, join: 10, referral: 10, mission: 3 };
+/**
+ * پیکربندی هر فعالیت جایزه‌دار. همه موارد از پنل مدیریت قابل تغییر است:
+ *   mode        fixed (کوین ثابت) | percent (درصد از مبلغ) | per (هر X تومان، ۱ کوین)
+ *   coins       کوین ثابت
+ *   percent     درصد از مبلغ خرید
+ *   perAmount   تومان به ازای هر ۱ کوین (حالت per)
+ *   cap         سقف هر جایزه (فقط درصدی)
+ *   minPurchase حداقل مبلغ خرید برای فعال‌بودن جایزه
+ *   repeat      once (فقط یک‌بار برای هر کاربر) | always (هر بار)
+ *   enabled     روشن/خاموش
+ */
+const REWARD_DEFAULTS = {
+  signup:   { mode: 'fixed', coins: 5,   percent: 0, perAmount: 10000, cap: 0,   minPurchase: 0, repeat: 'once',   enabled: true },
+  join:     { mode: 'fixed', coins: 10,  percent: 0, perAmount: 10000, cap: 0,   minPurchase: 0, repeat: 'once',   enabled: true },
+  referral: { mode: 'fixed', coins: 10,  percent: 0, perAmount: 10000, cap: 0,   minPurchase: 0, repeat: 'once',   enabled: true },
+  mission:  { mode: 'fixed', coins: 3,   percent: 0, perAmount: 10000, cap: 0,   minPurchase: 0, repeat: 'once',   enabled: true },
+  purchase: { mode: 'fixed', coins: 10,  percent: 1, perAmount: 10000, cap: 0,   minPurchase: 0, repeat: 'always', enabled: true },
+  first_purchase: { mode: 'fixed', coins: 20, percent: 0, perAmount: 10000, cap: 0, minPurchase: 0, repeat: 'once', enabled: true },
+  ref_purchase:   { mode: 'percent', coins: 0, percent: 5, perAmount: 10000, cap: 100, minPurchase: 0, repeat: 'always', enabled: true },
+  daily:    { mode: 'fixed', coins: 5,   percent: 0, perAmount: 10000, cap: 0,   minPurchase: 0, repeat: 'always', enabled: true },
+};
 
 /** هر فعالیت چه نوع رویدادی در دفتر می‌سازد. */
-const REWARD_EVENT = { signup: 'signup', join: 'join',
-                       referral: 'referral', mission: 'mission' };
+const REWARD_EVENT = { signup: 'signup', join: 'join', referral: 'referral',
+                       mission: 'mission', purchase: 'purchase',
+                       first_purchase: 'first_purchase',
+                       ref_purchase: 'referral', daily: 'daily' };
 
-/**
- * جوایز همه فعالیت‌ها.
- * اولویت: تنظیمات ذخیره‌شده > کلیدهای قدیمی (signupReward/referralReward)
- * > پیش‌فرض. پس از مهاجرت، مقدار از همین‌جا خوانده می‌شود.
- */
-function getRewards() {
-  const s = loadStore();
-  const out = {};
-  const cfg = s.settings || {};
-  for (const [k, legacy] of [['signup', 'signupReward'],
-                             ['referral', 'referralReward']]) {
-    if (cfg[legacy] !== undefined) out[k] = Number(cfg[legacy]) || 0;
+/** پیکربندی یک فعالیت با سازگاری مقادیر قدیمی (عدد یا کلیدهای قدیمی). */
+function normalizeReward(key, stored, settings) {
+  const def = REWARD_DEFAULTS[key] ||
+    { mode: 'fixed', coins: 10, percent: 0, perAmount: 10000, cap: 0,
+      minPurchase: 0, repeat: 'once', enabled: true };
+  const cfg = Object.assign({}, def);
+  if (stored !== undefined && stored !== null) {
+    if (typeof stored === 'object') Object.assign(cfg, stored);
+    else { cfg.mode = 'fixed'; cfg.coins = Math.max(0, Math.round(Number(stored) || 0)); }
   }
-  return Object.assign({}, REWARD_DEFAULTS, out, s.rewards || {});
+  // سازگاری با تنظیمات قدیمی خرید (purchaseMode/purchaseFixed/purchasePerAmount)
+  if (key === 'purchase' && stored === undefined) {
+    if (settings.purchaseMode === 'relative' && Number(settings.purchasePerAmount) > 0) {
+      cfg.mode = 'per';
+      cfg.perAmount = Math.max(1, Number(settings.purchasePerAmount));
+    } else if (settings.purchaseFixed !== undefined) {
+      cfg.coins = Math.max(0, Number(settings.purchaseFixed) || 0);
+    }
+  }
+  if (cfg.mode === 'percent') cfg.percent = Math.max(0, Number(cfg.percent) || 0);
+  return cfg;
 }
 
-function setReward(key, coins) {
+/** پیکربندی همه فعالیت‌ها (پیش‌فرض‌ها + سفارشی‌ها + سازگاری). */
+function getRewards() {
+  const s = loadStore();
+  const settings = s.settings || {};
+  const out = {};
+  const legacy = {};
+  if (settings.signupReward !== undefined) legacy.signup = Number(settings.signupReward) || 0;
+  if (settings.referralReward !== undefined) legacy.referral = Number(settings.referralReward) || 0;
+  const keys = new Set([...Object.keys(REWARD_DEFAULTS),
+                        ...Object.keys(s.rewards || {}),
+                        ...Object.keys(legacy)]);
+  for (const key of keys) {
+    const stored = legacy[key] !== undefined ? legacy[key] : (s.rewards || {})[key];
+    out[key] = normalizeReward(key, stored, settings);
+  }
+  return out;
+}
+
+function getReward(key) {
+  return getRewards()[String(key)] || null;
+}
+
+/** تغییر بخشی از پیکربندی یک فعالیت (مثلاً فقط percent یا enabled). */
+function setRewardConfig(key, patch) {
   key = String(key);
   const cur = getRewards();
   if (!(key in cur)) throw new Error('کلید جایزه ناشناخته: ' + key);
   const s = loadStore();
   s.rewards = s.rewards || {};
-  s.rewards[key] = Math.max(0, Math.round(Number(coins)));
+  const base = normalizeReward(key, undefined, s.settings || {});
+  const prev = (typeof s.rewards[key] === 'object' && s.rewards[key]) ? s.rewards[key] : {};
+  s.rewards[key] = Object.assign({}, base, prev, patch || {});
   saveStore(s);
-  return getRewards()[key];
+  return getReward(key);
+}
+
+/** سازگاری: مقدار ثابت (کوین) برای یک فعالیت. */
+function setReward(key, coins) {
+  return setRewardConfig(key, { mode: 'fixed', coins: Math.max(0, Math.round(Number(coins))) });
+}
+
+/** برگشت کامل به پیکربندی پیش‌فرض (یا حذف تنظیم سفارشی). */
+function resetRewardConfig(key) {
+  key = String(key);
+  const s = loadStore();
+  if (s.rewards && key in s.rewards) {
+    delete s.rewards[key];
+    saveStore(s);
+  }
+  return getReward(key);
 }
 
 /** افزودن فعالیت جایزه‌دار سفارشی (مثلاً بازدید روزانه). */
@@ -243,9 +303,12 @@ function addRewardAction(key, coins) {
   if (!/^[a-z0-9_]{2,20}$/.test(key)) throw new Error('کلید جایزه نامعتبر');
   const s = loadStore();
   s.rewards = s.rewards || {};
-  s.rewards[key] = Math.max(0, Math.round(Number(coins)) || 0);
+  s.rewards[key] = Object.assign(
+    { mode: 'fixed', coins: 0, percent: 0, perAmount: 10000, cap: 0,
+      minPurchase: 0, repeat: 'once', enabled: true },
+    { coins: Math.max(0, Math.round(Number(coins)) || 0) });
   saveStore(s);
-  return getRewards()[key];
+  return getReward(key);
 }
 
 /** حذف فعالیت سفارشی. پیش‌فرض‌ها حذف نمی‌شوند. */
@@ -259,29 +322,140 @@ function removeRewardAction(key) {
 }
 
 /**
- * دادن جایزه یک فعالیت به کاربر. هر فعالیت برای هر کاربر فقط یک بار.
- * نوع رویداد بر اساس فعالیت: signup/join/referral/mission.
+ * محاسبه کوین یک فعالیت بر اساس پیکربندی و بستر (مبلغ خرید).
+ * fixed: کوین ثابت | percent: درصد از مبلغ | per: هر X تومان، یک کوین.
+ * minPurchase: زیر این مبلغ جایزه‌ای نیست | cap: سقف هر جایزه (درصدی).
  */
-function grantReward(uid, key) {
-  key = String(key);
-  const coins = Number(getRewards()[key]);
-  if (!coins || coins <= 0) {
-    return { ok: false, reason: 'جایزه این فعالیت صفر یا تعریف‌نشده است' };
+function computeReward(key, ctx) {
+  const cfg = getReward(key);
+  if (!cfg || !cfg.enabled) return 0;
+  const amount = Math.max(0, Number(ctx && ctx.amount) || 0);
+  if (cfg.minPurchase > 0 && amount < cfg.minPurchase) return 0;
+  let coins = 0;
+  if (cfg.mode === 'percent') {
+    coins = Math.floor(amount * (Number(cfg.percent) || 0) / 100);
+    if (cfg.cap > 0) coins = Math.min(coins, Math.round(Number(cfg.cap)));
+  } else if (cfg.mode === 'per') {
+    coins = Math.floor(amount / Math.max(1, Number(cfg.perAmount) || 1));
+  } else {
+    coins = Math.round(Number(cfg.coins) || 0);
   }
-  const claimKey = 'r:' + String(uid) + ':' + key;
-  const s = loadStore();
-  s.claimed = s.claimed || {};
-  if (s.claimed[claimKey]) return { ok: false, reason: 'قبلاً دریافت شده' };
+  return Math.max(0, coins);
+}
 
+/**
+ * دادن جایزه یک فعالیت به کاربر.
+ * repeat=once فقط یک بار برای هر کاربر؛ repeat=always هر بار (سقف روزانه همچنان هست).
+ * ctx = { amount: مبلغ خرید (برای درصدی/نسبی), meta: اطلاعات فرعی }
+ */
+function grantReward(uid, key, ctx) {
+  key = String(key);
+  const cfg = getReward(key);
+  if (!cfg || !cfg.enabled) return { ok: false, reason: 'این فعالیت غیرفعال است' };
+  const coins = computeReward(key, ctx);
+  if (coins <= 0) return { ok: false, reason: 'جایزه این فعالیت صفر است' };
+  uid = String(uid);
+  const repeatOnce = cfg.repeat === 'once';
+  if (repeatOnce) {
+    const claimKey = 'r:' + uid + ':' + key;
+    const s0 = loadStore();
+    if (s0.claimed && s0.claimed[claimKey]) {
+      return { ok: false, reason: 'قبلاً دریافت شده' };
+    }
+  }
   const type = REWARD_EVENT[key] || 'mission';
-  const res = addEvent(uid, type, coins, { action: key });
+  const meta = Object.assign({ action: key }, (ctx && ctx.meta) || {});
+  const res = addEvent(uid, type, coins, meta);
   if (!res.ok) return res;
+  if (repeatOnce) {
+    const s2 = loadStore();
+    s2.claimed = s2.claimed || {};
+    s2.claimed['r:' + uid + ':' + key] = Date.now();
+    saveStore(s2);
+  }
+  return Object.assign({}, res, { amount: coins, key: key });
+}
 
-  const s2 = loadStore();
-  s2.claimed = s2.claimed || {};
-  s2.claimed[claimKey] = Date.now();
-  saveStore(s2);
-  return res;
+/** جایزه خرید سرویس (خود کاربر) + پاداش اولین خرید. */
+function onPurchase(uid, amountToman, meta) {
+  return [
+    Object.assign({ key: 'purchase' },
+      grantReward(uid, 'purchase', { amount: amountToman, meta: meta })),
+    Object.assign({ key: 'first_purchase' },
+      grantReward(uid, 'first_purchase', { amount: amountToman, meta: meta })),
+  ];
+}
+
+/** جایزه یک‌باره به دعوت‌کننده بابت اولین خرید دعوت‌شده. */
+function rewardReferral(inviterUid, inviteeUid, amountToman, meta) {
+  return grantReward(inviterUid, 'referral', {
+    amount: amountToman,
+    meta: Object.assign({ invitee: String(inviteeUid) }, meta || {}),
+  });
+}
+
+/** جایزه به دعوت‌کننده بابت هر خرید دعوت‌شده (همیشگی، با سقف). */
+function rewardRefPurchase(inviterUid, inviteeUid, amountToman, meta) {
+  return grantReward(inviterUid, 'ref_purchase', {
+    amount: amountToman,
+    meta: Object.assign({ invitee: String(inviteeUid) }, meta || {}),
+  });
+}
+
+// ── جایزه روزانه (حضور) با زنجیره ──
+
+function yesterdayKey(now) {
+  return todayKey(now - 864e5);
+}
+
+/** وضعیت جایزه روزانه کاربر: آیا امروز گرفته و زنجیره چند روز است. */
+function dailyStatus(uid) {
+  uid = String(uid);
+  const s = loadStore();
+  const rec = (s.daily || {})[uid];
+  const today = todayKey();
+  return {
+    claimedToday: !!(rec && rec.last === today),
+    streak: rec ? Math.max(1, Number(rec.streak) || 1) : 0,
+  };
+}
+
+/**
+ * جایزه روزانه. هر روز پیاپی ۱۰٪ پاداش بیشتر (تا ۲ برابر).
+ * opts.now فقط برای آزمون (شبیه‌سازی روزهای گذشته).
+ */
+function claimDaily(uid, opts) {
+  uid = String(uid);
+  const cfg = getReward('daily');
+  if (!cfg || !cfg.enabled) return { ok: false, reason: 'جایزه روزانه غیرفعال است' };
+  const now = (opts && opts.now) || Date.now();
+  const today = todayKey(now);
+  const s = loadStore();
+  const prev = (s.daily || {})[uid];
+  if (prev && prev.last === today) {
+    return { ok: false, reason: 'امروز گرفتی',
+             streak: Math.max(1, Number(prev.streak) || 1) };
+  }
+  let streak = 1;
+  if (prev && prev.last === yesterdayKey(now)) {
+    streak = (Number(prev.streak) || 1) + 1;
+  }
+  const mult = 1 + 0.1 * Math.min(Math.max(0, streak - 1), 9);
+  const coins = Math.round(computeReward('daily', {}) * mult);
+  if (coins <= 0) return { ok: false, reason: 'جایزه روزانه صفر است' };
+  const res = addEvent(uid, 'daily', coins, {
+    streak: streak, mult: Math.round(mult * 100) / 100 });
+  if (!res.ok) return res;
+  s.daily = s.daily || {};
+  s.daily[uid] = { last: today, streak: streak };
+  saveStore(s);
+  return Object.assign({}, res, { amount: coins, streak: streak,
+                                  mult: Math.round(mult * 100) / 100 });
+}
+
+/** نرخ کوین بابت خرید (سازگاری کامل با تنظیمات قدیمی). */
+function coinsForPurchase(tomanAmount) {
+  return computeReward('purchase', { amount: tomanAmount });
 }
 
 /** قیمت کوینی یک محصول. اگر تعریف نشده باشد، یعنی با کوین فروخته نمی‌شود. */
@@ -308,6 +482,9 @@ const TEXTS = {
   earn_purchase: 'خرید سرویس',
   earn_mission: 'انجام ماموریت‌ها',
   earn_referral: 'خرید دوستان دعوت‌شده',
+  earn_daily: 'حضور روزانه',
+  earn_first_purchase: 'اولین خرید شما',
+  earn_ref_purchase: 'خرید زیرمجموعه‌های شما',
 };
 
 /** متن‌ها با اولویت: ذخیره‌شده > پیش‌فرض. */
@@ -518,12 +695,30 @@ function cli() {
     case 'rewards':
       return out(getRewards());
     case 'reward':
-      return out({ key: a, coins: b === undefined ? getRewards()[a]
-                                                  : setReward(a, Number(b)) });
+      return out({ key: a, reward: b === undefined ? getReward(a)
+                                                   : setReward(a, Number(b)) });
+    case 'reward-config':
+      return out(setRewardConfig(a, JSON.parse(b || '{}')));
+    case 'reward-mode':
+      return out(setRewardConfig(a, { mode: b }));
+    case 'reward-cap':
+      return out(setRewardConfig(a, { cap: Number(b) }));
+    case 'reward-min':
+      return out(setRewardConfig(a, { minPurchase: Number(b) }));
+    case 'reward-repeat':
+      return out(setRewardConfig(a, { repeat: b }));
+    case 'reward-toggle':
+      return out(setRewardConfig(a, { enabled: b !== 'false' }));
     case 'reward-add':
-      return out({ key: a, coins: addRewardAction(a, Number(b)) });
+      return out({ key: a, reward: addRewardAction(a, Number(b)) });
     case 'reward-del':
       return out({ removed: removeRewardAction(a) });
+    case 'daily':
+      return out(claimDaily(a));
+    case 'purchase':
+      return out(onPurchase(a, Number(b), { note: rest.join(' ') }));
+    case 'ref-purchase':
+      return out(rewardRefPurchase(a, b, Number(rest[0]), { note: rest.slice(1).join(' ') }));
     case 'texts':
       return out(getTexts());
     case 'text':
@@ -571,8 +766,17 @@ function cli() {
         '  node foxcoin.js ledger [تعداد]',
         '  node foxcoin.js rewards',
         '  node foxcoin.js reward <کلید> [کوین]',
+        '  node foxcoin.js reward-config <کلید> \'{"mode":"percent","percent":5}\'',
+        '  node foxcoin.js reward-mode <کلید> fixed|percent|per',
+        '  node foxcoin.js reward-cap <کلید> <سقف>',
+        '  node foxcoin.js reward-min <کلید> <حداقل مبلغ>',
+        '  node foxcoin.js reward-repeat <کلید> once|always',
+        '  node foxcoin.js reward-toggle <کلید>',
         '  node foxcoin.js reward-add <کلید> <کوین>',
         '  node foxcoin.js reward-del <کلید>',
+        '  node foxcoin.js daily <شناسه کاربر>',
+        '  node foxcoin.js purchase <شناسه> <مبلغ تومان>',
+        '  node foxcoin.js ref-purchase <دعوت‌کننده> <دعوت‌شده> <مبلغ>',
         '  node foxcoin.js texts',
         '  node foxcoin.js text <کلید> <متن>',
         '  node foxcoin.js text-reset <کلید>',
@@ -633,7 +837,22 @@ function selftest() {
     'a(m.history("u1",2).length===2,"تاریخچه محدود شد");',
     'a(m.history("u1",1)[0].type==="spend","آخرین رویداد خرج است");',
     'const rw0=m.getRewards();',
-    'a(rw0.signup===5 && rw0.join===10 && rw0.mission===3,"جوایز پیش‌فرض درست است");',
+    'a(rw0.signup.coins===5 && rw0.join.coins===10 && rw0.mission.coins===3,"جوایز پیش‌فرض درست است");',
+    'a(rw0.ref_purchase.mode==="percent" && rw0.ref_purchase.percent===5,"خرید زیرمجموعه پیش‌فرض درصدی است");',
+    'a(m.computeReward("ref_purchase",{amount:1000})===50,"درصد جایزه زیرمجموعه حساب شد");',
+    'a(m.computeReward("ref_purchase",{amount:100000})===100,"سقف جایزه زیرمجموعه اعمال شد");',
+    'a(m.computeReward("purchase",{amount:50000})===10,"جایزه خرید پیش‌فرض ثابت است");',
+    'm.setRewardConfig("purchase",{mode:"percent",percent:1});',
+    'a(m.computeReward("purchase",{amount:50000})===500,"جایزه خرید درصدی شد");',
+    'a(m.coinsForPurchase(50000)===500,"نرخ خرید از پیکربندی جوایز می‌آید");',
+    'm.setRewardConfig("purchase",{mode:"per",perAmount:10000});',
+    'a(m.coinsForPurchase(35000)===3,"نرخ نسبی (هر ده هزار) درست است");',
+    'a(m.coinsForPurchase(5000)===0,"زیر یک واحد نسبی چیزی نمی‌دهد");',
+    'm.setRewardConfig("purchase",{mode:"fixed",coins:10});',
+    'm.setRewardConfig("ref_purchase",{minPurchase:100000});',
+    'a(m.computeReward("ref_purchase",{amount:50000})===0,"حداقل مبلغ خرید رعایت شد");',
+    'a(m.computeReward("ref_purchase",{amount:200000})===100,"بالای حداقل مبلغ جایزه حساب شد");',
+    'm.setRewardConfig("ref_purchase",{minPurchase:0});',
     'm.setReward("join",0);',
     'a(!m.grantReward("u1","join").ok,"جایزه صفر رد شد");',
     'm.setReward("join",10);',
@@ -642,10 +861,38 @@ function selftest() {
     'a(m.getBalance("u1")===168,"موجودی با جوین درست شد");',
     'a(m.grantReward("u1","referral").ok,"جایزه دعوت داده شد");',
     'a(m.getBalance("u1")===178,"موجودی با دعوت درست شد");',
-    'm.addRewardAction("daily",7);',
-    'a(m.getRewards().daily===7,"فعالیت سفارشی اضافه شد");',
-    'a(m.grantReward("u1","daily").ok,"جایزه فعالیت سفارشی داده شد");',
-    'a(m.removeRewardAction("daily")===true,"فعالیت سفارشی حذف شد");',
+    'a(m.rewardReferral("u5","u9",100000).ok,"جایزه دعوت (اولین خرید دعوت‌شده) داده شد");',
+    'a(!m.rewardReferral("u5","u9",100000).ok,"جایزه دعوت فقط یک بار است");',
+    'const rr=m.rewardRefPurchase("u4","u9",50000);',
+    'a(rr.ok && rr.amount===100,"خرید زیرمجموعه: ۵٪ با سقف ۱۰۰");',
+    'a(!m.rewardRefPurchase("u4","u9",50000).ok,"سقف روزانه برای خرید زیرمجموعه هم هست");',
+    'a(m.getBalance("u4")===100,"موجودی دعوت‌کننده درست شد");',
+    'm.setRewardConfig("join",{enabled:false});',
+    'a(!m.grantReward("u1","join").ok,"فعالیت غیرفعال جایزه نمی‌دهد");',
+    'm.setRewardConfig("join",{enabled:true});',
+    'const fp=m.onPurchase("u3",200000,{desc:"تست"});',
+    'a(fp[0].ok && fp[0].amount===10,"جایزه خرید عادی داده شد");',
+    'a(fp[1].ok && fp[1].amount===20,"پاداش اولین خرید داده شد");',
+    'const fp2=m.onPurchase("u3",100000);',
+    'a(fp2[0].ok,"خرید دوم هم جایزه دارد");',
+    'a(!fp2[1].ok,"پاداش اولین خرید فقط یک بار است");',
+    'a(m.claimDaily("u2",{now:Date.now()-1728e5}).ok,"جایزه روزانه (دو روز پیش) گرفته شد");',
+    'const d2=m.claimDaily("u2",{now:Date.now()-864e5});',
+    'a(d2.ok && d2.streak===2,"زنجیره روز دوم شد");',
+    'const d3=m.claimDaily("u2");',
+    'a(d3.ok && d3.streak===3 && d3.amount===6,"روز سوم با پاداش زنجیره ۱.۲ برابر شد");',
+    'a(!m.claimDaily("u2").ok,"جایزه روزانه تکراری رد شد");',
+    'a(m.dailyStatus("u2").claimedToday===true,"وضعیت روزانه درست است");',
+    'm.setRewardConfig("daily",{enabled:false});',
+    'a(!m.claimDaily("u1").ok,"جایزه روزانه غیرفعال رد شد");',
+    'm.setRewardConfig("daily",{enabled:true});',
+    'm.addRewardAction("visit",2);',
+    'a(m.getRewards().visit.coins===2,"فعالیت سفارشی اضافه شد");',
+    'a(m.grantReward("u1","visit").ok,"جایزه فعالیت سفارشی داده شد");',
+    'a(!m.grantReward("u1","visit").ok,"فعالیت سفارشی فقط یک بار است");',
+    'm.setRewardConfig("visit",{repeat:"always"});',
+    'a(m.grantReward("u1","visit").ok,"با تکرار همیشگی دوباره جایزه داد");',
+    'a(m.removeRewardAction("visit")===true,"فعالیت سفارشی حذف شد");',
     'a(m.removeRewardAction("join")===false,"پیش‌فرض حذف نمی‌شود");',
     'a(m.getTexts().guide_what.includes("امتیاز داخلی"),"متن پیش‌فرض راهنما هست");',
     'a(m.getTexts().earn_join==="جوین کانال/گروه","عنوان بخش جوین پیش‌فرض است");',
@@ -673,7 +920,10 @@ module.exports = {
   claimMission, getCoinPrice, setCoinPrice, getCoinPrices, spendForPlan,
   listProducts, getProduct, setProduct, removeProduct,
   topHolders, recentUsers, ledgerRecent, userList,
-  getRewards, setReward, addRewardAction, removeRewardAction, grantReward,
+  getRewards, getReward, setReward, setRewardConfig, resetRewardConfig, computeReward,
+  addRewardAction, removeRewardAction, grantReward,
+  onPurchase, rewardReferral, rewardRefPurchase,
+  claimDaily, dailyStatus, coinsForPurchase,
   getTexts, setText, resetText, TEXTS,
   history, stats, readLedger, DEFAULTS, EVENTS, REWARD_DEFAULTS,
 };

@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.4.0 | 2026-08-22 | فاز ۳ + فاکس شاپ + دست بازتر + جوایز + متن‌ها
+ *  نسخه: 1.5.0 | 2026-08-22 | فاکس شاپ + موتور جوایز پیشرفته + متن‌ها
  * ════════════════════════════════════════════════════════════════
  *
  *  این ماژول بخش مدیریت فاکس کوین است: آمار، تنظیمات، محصولات،
@@ -61,6 +61,9 @@ const TEXTS_FA = {
   earn_purchase: 'عنوان بخش خرید',
   earn_mission: 'عنوان بخش ماموریت',
   earn_referral: 'عنوان بخش دعوت دوستان',
+  earn_daily: 'عنوان بخش حضور روزانه',
+  earn_first_purchase: 'عنوان بخش اولین خرید',
+  earn_ref_purchase: 'عنوان بخش خرید زیرمجموعه',
 };
 
 /**
@@ -109,14 +112,20 @@ const EVENT_FA = {
   admin: 'اصلاح ادمین',
   reset: 'صفرسازی',
   join: 'جوین کانال',
+  daily: 'جایزه روزانه',
+  first_purchase: 'جایزه اولین خرید',
 };
 
 /** برچسب فارسی هر فعالیت جایزه‌دار. */
 const REWARD_LABELS = {
   signup: 'ثبت‌نام در ربات',
   join: 'جوین کانال/گروه',
-  referral: 'دعوت دوستان (پس از خرید)',
+  referral: 'دعوت دوستان (اولین خرید دعوت‌شده)',
   mission: 'انجام ماموریت',
+  purchase: 'خرید سرویس (خود کاربر)',
+  first_purchase: 'اولین خرید کاربر',
+  ref_purchase: 'خرید زیرمجموعه‌ها (هر بار)',
+  daily: 'حضور روزانه',
 };
 
 /** برچسب فارسی هر کلید تنظیمات، برای پنل. */
@@ -187,7 +196,7 @@ function screenMenu() {
     '🪙 کوین در گردش\n<code>' + fa(s.circulating) + '</code>\n\n' +
     '📊 مجموع رویدادها\n<code>' + fa(s.events) + '</code>\n\n' +
     '<i>هر تغییر با دکمه انجام می‌شود و در دفتر کل ثبت می‌شود.</i>\n\n' +
-    '<code>نسخه 1.4.0</code>';
+    '<code>نسخه 1.5.0</code>';
   return {
     text: text,
     markup: kb([
@@ -279,48 +288,130 @@ function screenSettings() {
  * ثبت‌نام، جوین کانال، دعوت دوستان، ماموریت — و هر فعالیت سفارشی.
  * مقدارها از هسته زنده خوانده می‌شوند.
  */
+/** خلاصه یک‌خطی پیکربندی برای فهرست جوایز. */
+function rewardSummary(cfg) {
+  if (!cfg) return '';
+  if (cfg.mode === 'percent') {
+    let t = fa(cfg.percent) + '٪ از مبلغ';
+    if (cfg.cap > 0) t += ' (سقف ' + fa(cfg.cap) + ')';
+    return t;
+  }
+  if (cfg.mode === 'per') return 'هر ' + fa(cfg.perAmount) + ' تومان → ۱';
+  return fa(cfg.coins) + ' کوین';
+}
+
 function screenRewards() {
   const rw = coin.getRewards();
   const defKeys = Object.keys(coin.REWARD_DEFAULTS || {});
   const customKeys = Object.keys(rw).filter(k => !defKeys.includes(k));
   let text = '<b>' + T.rewards + '</b>\n' + LINE + '\n\n' +
-             '<i>برای هر فعالیت، کوین دلخواه تعیین کنید.\n' +
+             '<i>برای هر فعالیت، نوع و مقدار جایزه را تعیین کنید.\n' +
              'روی هر آیتم بزنید تا ویرایش شود.</i>\n';
   const rows = [];
   for (const key of [...defKeys, ...customKeys]) {
+    const cfg = rw[key];
     const label = REWARD_LABELS[key] || key;
     const custom = customKeys.includes(key) ? ' ⭐' : '';
-    rows.push([{ text: label + custom + '\n<code>' + fa(rw[key]) +
-                '</code> کوین',
+    const rep = cfg.repeat === 'always' ? '— هر بار' : '— یک‌بار';
+    const off = cfg.enabled ? '' : ' ⛔';
+    rows.push([{ text: label + custom + '\n<code>' + rewardSummary(cfg) +
+                '</code> ' + rep + off,
                  callback_data: 'admin:rcoins:' + key }]);
   }
   rows.push([{ text: T.back, callback_data: 'admin:settings' }]);
   return { text: text, markup: kb(rows) };
 }
 
-/** صفحه ویرایش مقدار یک فعالیت. */
+/** صفحه ویرایش کامل یک فعالیت: حالت، مقدار، سقف، حداقل خرید، تکرار، فعال/غیرفعال. */
 function screenRewardEdit(key) {
-  const rw = coin.getRewards();
-  if (!(key in rw)) return screenRewards();
-  const label = REWARD_LABELS[key] || key;
-  const cur = rw[key];
+  const cfg = coin.getReward(key);
   const def = (coin.REWARD_DEFAULTS || {})[key];
   const isCustom = def === undefined;
+  if (!cfg) return screenRewards();
+  const label = REWARD_LABELS[key] || key;
+  const modeFA = cfg.mode === 'percent' ? '📈 درصدی' :
+                 (cfg.mode === 'per' ? '🔢 نسبی (هر X تومان)' : '💰 ثابت');
   let text =
     '<b>🎁 ' + label + '</b>\n' + LINE + '\n\n' +
-    'جایزه فعلی\n<code>' + fa(cur) + '</code> کوین\n\n' +
-    '<i>هر دکمه همان لحظه اعمال می‌شود.\n' +
-    'صفر یعنی این فعالیت جایزه ندارد.</i>';
-  const rows = [
-    [{ text: '➖100', callback_data: 'admin:rcoinsv:' + key + ':-100' },
-     { text: '➖10', callback_data: 'admin:rcoinsv:' + key + ':-10' },
-     { text: '➖1', callback_data: 'admin:rcoinsv:' + key + ':-1' }],
-    [{ text: '➕1', callback_data: 'admin:rcoinsv:' + key + ':1' },
-     { text: '➕10', callback_data: 'admin:rcoinsv:' + key + ':10' },
-     { text: '➕100', callback_data: 'admin:rcoinsv:' + key + ':100' }],
-  ];
+    'حالت: <b>' + modeFA + '</b>\n' +
+    'مقدار: <code>' + rewardSummary(cfg) + '</code>\n';
+  if (cfg.mode === 'percent' && cfg.cap > 0) {
+    text += 'سقف هر جایزه: <code>' + fa(cfg.cap) + '</code> کوین\n';
+  }
+  if (cfg.minPurchase > 0) {
+    text += 'حداقل مبلغ خرید: <code>' + fa(cfg.minPurchase) + '</code> تومان\n';
+  }
+  text += 'تکرار: <b>' + (cfg.repeat === 'always' ? 'همیشگی (هر بار)' : 'فقط یک‌بار') +
+          '</b>\n' +
+          'وضعیت: <b>' + (cfg.enabled ? '✅ فعال' : '⛔ غیرفعال') + '</b>\n\n' +
+          '<i>هر دکمه همان لحظه اعمال می‌شود.</i>';
+  const rows = [];
+  const sel = (cond) => cond ? '✅ ' : '';
+  rows.push([
+    { text: sel(cfg.mode === 'fixed') + '💰 ثابت',
+      callback_data: 'admin:rmode:' + key },
+    { text: sel(cfg.mode === 'percent') + '📈 درصدی',
+      callback_data: 'admin:rmode:' + key },
+    { text: sel(cfg.mode === 'per') + '🔢 نسبی',
+      callback_data: 'admin:rmode:' + key },
+  ]);
+  if (cfg.mode === 'percent') {
+    rows.push([
+      { text: '➖10', callback_data: 'admin:rv:' + key + ':-10' },
+      { text: '➖1', callback_data: 'admin:rv:' + key + ':-1' },
+      { text: '➖0.1', callback_data: 'admin:rv:' + key + ':-0.1' },
+      { text: '➕0.1', callback_data: 'admin:rv:' + key + ':0.1' },
+      { text: '➕1', callback_data: 'admin:rv:' + key + ':1' },
+      { text: '➕10', callback_data: 'admin:rv:' + key + ':10' },
+    ]);
+    rows.push([
+      { text: 'سقف: ' + fa(cfg.cap || 0), callback_data: 'admin:rcap:' + key + ':0' },
+      { text: '➖100', callback_data: 'admin:rcap:' + key + ':-100' },
+      { text: '➖10', callback_data: 'admin:rcap:' + key + ':-10' },
+      { text: '➕10', callback_data: 'admin:rcap:' + key + ':10' },
+      { text: '➕100', callback_data: 'admin:rcap:' + key + ':100' },
+    ]);
+  } else if (cfg.mode === 'per') {
+    rows.push([
+      { text: '➖10000', callback_data: 'admin:rv:' + key + ':-10000' },
+      { text: '➖1000', callback_data: 'admin:rv:' + key + ':-1000' },
+      { text: '➖100', callback_data: 'admin:rv:' + key + ':-100' },
+      { text: '➕100', callback_data: 'admin:rv:' + key + ':100' },
+      { text: '➕1000', callback_data: 'admin:rv:' + key + ':1000' },
+      { text: '➕10000', callback_data: 'admin:rv:' + key + ':10000' },
+    ]);
+  } else {
+    rows.push([
+      { text: '➖100', callback_data: 'admin:rv:' + key + ':-100' },
+      { text: '➖10', callback_data: 'admin:rv:' + key + ':-10' },
+      { text: '➖1', callback_data: 'admin:rv:' + key + ':-1' },
+      { text: '➕1', callback_data: 'admin:rv:' + key + ':1' },
+      { text: '➕10', callback_data: 'admin:rv:' + key + ':10' },
+      { text: '➕100', callback_data: 'admin:rv:' + key + ':100' },
+    ]);
+  }
+  if (['purchase', 'ref_purchase', 'first_purchase', 'referral'].includes(key)) {
+    rows.push([
+      { text: 'حداقل خرید: ' + fa(cfg.minPurchase || 0) + 'ت',
+        callback_data: 'admin:rmin:' + key + ':0' },
+      { text: '➖100000', callback_data: 'admin:rmin:' + key + ':-100000' },
+      { text: '➖10000', callback_data: 'admin:rmin:' + key + ':-10000' },
+      { text: '➕10000', callback_data: 'admin:rmin:' + key + ':10000' },
+      { text: '➕100000', callback_data: 'admin:rmin:' + key + ':100000' },
+    ]);
+  }
+  rows.push([
+    { text: sel(cfg.repeat === 'always') + '🔁 همیشگی',
+      callback_data: 'admin:rrep:' + key },
+    { text: sel(cfg.repeat === 'once') + '🔂 فقط یک‌بار',
+      callback_data: 'admin:rrep:' + key },
+  ]);
+  rows.push([
+    { text: cfg.enabled ? '⛔ غیرفعال کن' : '✅ فعال کن',
+      callback_data: 'admin:ren:' + key },
+  ]);
   if (!isCustom) {
-    rows.push([{ text: '↩️ پیش‌فرض: ' + fa(def),
+    rows.push([{ text: '↩️ پیش‌فرض: ' + rewardSummary(def),
                  callback_data: 'admin:rreset:' + key }]);
   } else {
     rows.push([{ text: '🗑 حذف فعالیت', callback_data: 'admin:rdel:' + key,
@@ -330,17 +421,75 @@ function screenRewardEdit(key) {
   return { text: text, markup: kb(rows) };
 }
 
+/** تعدیل مقدار: درصد در حالت درصدی، تومان در حالت نسبی، کوین در حالت ثابت. */
 function applyReward(key, delta) {
   try {
-    const cur = Number(coin.getRewards()[key]) || 0;
-    coin.setReward(key, Math.max(0, cur + Number(delta)));
+    const cfg = coin.getReward(key);
+    if (!cfg) return screenRewards();
+    const v = Number(delta) || 0;
+    if (cfg.mode === 'percent') {
+      const next = Math.max(0, Math.round(((Number(cfg.percent) || 0) + v) * 100) / 100);
+      coin.setRewardConfig(key, { percent: next });
+    } else if (cfg.mode === 'per') {
+      const next = Math.max(1, (Number(cfg.perAmount) || 10000) + v);
+      coin.setRewardConfig(key, { perAmount: next });
+    } else {
+      const next = Math.max(0, (Number(cfg.coins) || 0) + v);
+      coin.setRewardConfig(key, { coins: next });
+    }
   } catch (e) { /* کلید نامعتبر */ }
+  return screenRewardEdit(key);
+}
+
+/** چرخش حالت: ثابت → درصدی → نسبی → ثابت. */
+function toggleRewardMode(key) {
+  try {
+    const cfg = coin.getReward(key);
+    if (!cfg) return screenRewards();
+    const order = ['fixed', 'percent', 'per'];
+    const next = order[(order.indexOf(cfg.mode) + 1) % order.length];
+    coin.setRewardConfig(key, { mode: next });
+  } catch (e) { /* ignore */ }
+  return screenRewardEdit(key);
+}
+
+function applyRewardCap(key, delta) {
+  try {
+    const cfg = coin.getReward(key);
+    const next = Math.max(0, (Number(cfg.cap) || 0) + Number(delta));
+    coin.setRewardConfig(key, { cap: next });
+  } catch (e) { /* ignore */ }
+  return screenRewardEdit(key);
+}
+
+function applyRewardMin(key, delta) {
+  try {
+    const cfg = coin.getReward(key);
+    const next = Math.max(0, (Number(cfg.minPurchase) || 0) + Number(delta));
+    coin.setRewardConfig(key, { minPurchase: next });
+  } catch (e) { /* ignore */ }
+  return screenRewardEdit(key);
+}
+
+function toggleRewardRepeat(key) {
+  try {
+    const cfg = coin.getReward(key);
+    coin.setRewardConfig(key, { repeat: cfg.repeat === 'once' ? 'always' : 'once' });
+  } catch (e) { /* ignore */ }
+  return screenRewardEdit(key);
+}
+
+function toggleRewardEnabled(key) {
+  try {
+    const cfg = coin.getReward(key);
+    coin.setRewardConfig(key, { enabled: !cfg.enabled });
+  } catch (e) { /* ignore */ }
   return screenRewardEdit(key);
 }
 
 function resetReward(key) {
   try {
-    coin.setReward(key, (coin.REWARD_DEFAULTS || {})[key] || 0);
+    coin.resetRewardConfig(key);
   } catch (e) { /* ignore */ }
   return screenRewardEdit(key);
 }
@@ -1306,6 +1455,9 @@ const P = {
   allusers: 'admin:allusers:',
   rcoins: 'admin:rcoins:', rcoinsv: 'admin:rcoinsv:',
   rreset: 'admin:rreset:', rdel: 'admin:rdel:',
+  rmode: 'admin:rmode:', rv: 'admin:rv:',
+  rcap: 'admin:rcap:', rmin: 'admin:rmin:',
+  rrep: 'admin:rrep:', ren: 'admin:ren:',
   tedit: 'admin:tedit:', treset: 'admin:treset:',
   user: 'admin:user:', uhist: 'admin:uhist:',
   grant: 'admin:grant:', grantv: 'admin:grantv:', grantgo: 'admin:grantgo:',
@@ -1375,7 +1527,19 @@ async function route(ctx) {
   else if (d.startsWith(P.rcoinsv)) {
     const [k, v] = after(d, P.rcoinsv).split(':');
     s = applyReward(k, v);
-  } else if (d.startsWith(P.rreset)) s = resetReward(after(d, P.rreset));
+  } else if (d.startsWith(P.rmode)) s = toggleRewardMode(after(d, P.rmode));
+  else if (d.startsWith(P.rv)) {
+    const [k, v] = after(d, P.rv).split(':');
+    s = applyReward(k, v);
+  } else if (d.startsWith(P.rcap)) {
+    const [k, v] = after(d, P.rcap).split(':');
+    s = applyRewardCap(k, v);
+  } else if (d.startsWith(P.rmin)) {
+    const [k, v] = after(d, P.rmin).split(':');
+    s = applyRewardMin(k, v);
+  } else if (d.startsWith(P.rrep)) s = toggleRewardRepeat(after(d, P.rrep));
+  else if (d.startsWith(P.ren)) s = toggleRewardEnabled(after(d, P.ren));
+  else if (d.startsWith(P.rreset)) s = resetReward(after(d, P.rreset));
   else if (d.startsWith(P.rdel)) s = deleteReward(after(d, P.rdel));
   else if (d === 'admin:texts') s = screenTexts();
   else if (d.startsWith(P.tedit)) s = screenTextEdit(ctx.uid, after(d, P.tedit));
@@ -1651,26 +1815,71 @@ if (require.main === module) {
         'همه کاربران فهرست شدند');
       a(sent.text.includes('صفحه 1'), 'صفحه‌بندی نمایش داده شد');
 
-      // ── جوایز فعالیت
+      // ── جوایز فعالیت (موتور پیشرفته)
       await go('admin:rewards');
       a(sent.text.includes('جوایز') &&
         JSON.stringify(sent.markup).includes('جوین'),
         'صفحه جوایز باز شد');
+      a(JSON.stringify(sent.markup).includes('خرید زیرمجموعه‌ها'),
+        'خرید زیرمجموعه در فهرست جوایز هست');
+      a(JSON.stringify(sent.markup).includes('حضور روزانه'),
+        'حضور روزانه در فهرست جوایز هست');
       await go('admin:rcoins:join');
-      a(sent.text.includes('10'), 'جایزه فعلی جوین نمایش داده شد');
-      await go('admin:rcoinsv:join:5');
-      a(coin.getRewards().join === 15, 'جایزه جوین با دکمه تغییر کرد');
+      a(sent.text.includes('10') && sent.text.includes('یک‌بار'),
+        'جایزه فعلی جوین با جزئیات نمایش داده شد');
+      await go('admin:rv:join:5');
+      a(coin.getRewards().join.coins === 15, 'جایزه جوین با دکمه +۵ شد');
       await go('admin:rreset:join');
-      a(coin.getRewards().join === 10, 'ریست جایزه به پیش‌فرض کار کرد');
-      coin.addRewardAction('daily', 7);
-      await go('admin:rcoins:daily');
+      a(coin.getRewards().join.coins === 10, 'ریست جایزه به پیش‌فرض کار کرد');
+      // حالت‌ها: ثابت → درصدی → نسبی
+      await go('admin:rmode:join');
+      a(coin.getRewards().join.mode === 'percent', 'حالت جوین درصدی شد');
+      await go('admin:rv:join:1');
+      a(coin.getRewards().join.percent === 1, 'درصد با دکمه تغییر کرد');
+      await go('admin:rv:join:-0.5');
+      a(coin.getRewards().join.percent === 0.5, 'درصد اعشار هم می‌پذیرد');
+      await go('admin:rmode:join');
+      a(coin.getRewards().join.mode === 'per', 'حالت جوین نسبی شد');
+      await go('admin:rv:join:1000');
+      a(coin.getRewards().join.perAmount === 11000, 'تومان نسبی تغییر کرد');
+      await go('admin:rmode:join');
+      await go('admin:rreset:join');
+      a(coin.getRewards().join.mode === 'fixed' &&
+        coin.getRewards().join.coins === 10, 'برگشت کامل به پیش‌فرض');
+      // سقف و حداقل خرید برای خرید زیرمجموعه
+      await go('admin:rcoins:ref_purchase');
+      a(sent.text.includes('5٪') && sent.text.includes('سقف'),
+        'صفحه خرید زیرمجموعه جزئیات درصدی دارد');
+      await go('admin:rcap:ref_purchase:50');
+      a(coin.getRewards().ref_purchase.cap === 150, 'سقف جایزه +۵۰ شد');
+      await go('admin:rmin:ref_purchase:100000');
+      a(coin.getRewards().ref_purchase.minPurchase === 100000,
+        'حداقل مبلغ خرید ثبت شد');
+      await go('admin:rmin:ref_purchase:-100000');
+      a(coin.getRewards().ref_purchase.minPurchase === 0,
+        'حداقل مبلغ خرید صفر شد');
+      await go('admin:rreset:ref_purchase');
+      a(coin.getRewards().ref_purchase.cap === 100, 'ریست خرید زیرمجموعه');
+      // تکرار و فعال/غیرفعال
+      await go('admin:rcoins:mission');
+      await go('admin:rrep:mission');
+      a(coin.getRewards().mission.repeat === 'always', 'ماموریت همیشگی شد');
+      await go('admin:rrep:mission');
+      a(coin.getRewards().mission.repeat === 'once', 'ماموریت یک‌بار شد');
+      await go('admin:ren:mission');
+      a(coin.getRewards().mission.enabled === false, 'ماموریت غیرفعال شد');
+      await go('admin:ren:mission');
+      a(coin.getRewards().mission.enabled === true, 'ماموریت فعال شد');
+      // فعالیت سفارشی
+      coin.addRewardAction('visit', 7);
+      await go('admin:rcoins:visit');
       a(sent.text.includes('7'), 'فعالیت سفارشی در پنل دیده شد');
-      await go('admin:rcoinsv:daily:3');
-      a(coin.getRewards().daily === 10, 'جایزه فعالیت سفارشی ویرایش شد');
-      await go('admin:rdel:daily');
-      a(!('daily' in coin.getRewards()), 'فعالیت سفارشی حذف شد');
+      await go('admin:rv:visit:3');
+      a(coin.getRewards().visit.coins === 10, 'جایزه فعالیت سفارشی ویرایش شد');
+      await go('admin:rdel:visit');
+      a(!('visit' in coin.getRewards()), 'فعالیت سفارشی حذف شد');
       await go('admin:rdel:join');
-      a(coin.getRewards().join === 10, 'پیش‌فرض با حذف حذف نمی‌شود');
+      a(coin.getRewards().join.coins === 10, 'پیش‌فرض با حذف حذف نمی‌شود');
 
       // ── متن‌ها
       await go('admin:texts');

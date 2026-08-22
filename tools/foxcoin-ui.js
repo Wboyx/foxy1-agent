@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN UI — رابط کاربری کوین
- *  نسخه: 1.3.0 | 2026-08-22 | فاز ۲ + فروشگاه + جوایز زنده + متن‌های سفارشی
+ *  نسخه: 1.4.0 | 2026-08-22 | فروشگاه + جوایز پیشرفته + جایزه روزانه + متن‌ها
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا ماژول جدا:
@@ -26,6 +26,7 @@ const T = {
   missions: '🎯 ماموریت‌ها',
   history: '📜 گردش حساب',
   guide: '❓ راهنما',
+  daily: '🎁 جایزه روزانه',
   back: '⬅️ بازگشت',
   home: '🏠 منوی اصلی',
   soon: 'این بخش به‌زودی فعال می‌شود.',
@@ -42,6 +43,8 @@ const EVENT_FA = {
   admin: 'اصلاح ادمین',
   reset: 'صفرسازی',
   join: 'جوین کانال',
+  daily: 'جایزه روزانه',
+  first_purchase: 'جایزه اولین خرید',
 };
 
 function fa(n) {
@@ -78,7 +81,7 @@ function screenMenu(uid) {
             '</code> کوین دیگر لازم دارید.\n\n')
       : '') +
     txt.menu_note + '\n\n' +
-    '<code>نسخه 1.3.0</code>';
+    '<code>نسخه 1.4.0</code>';
   return {
     text: text,
     markup: kb([
@@ -87,6 +90,7 @@ function screenMenu(uid) {
        { text: T.history, callback_data: 'coin:hist' }],
       [{ text: T.missions, callback_data: 'coin:miss' },
        { text: T.guide, callback_data: 'coin:help', style: 'primary' }],
+      [{ text: T.daily, callback_data: 'coin:daily', style: 'primary' }],
       [{ text: T.home, callback_data: 'back_main' }],
     ]),
   };
@@ -104,26 +108,50 @@ function screenGuide(uid) {
   const items = coin.listProducts();
   const txt = coin.getTexts();
   const earn = [];
-  if (rw.signup > 0) {
-    earn.push('• ' + txt.earn_signup + '\n   <code>' + fa(rw.signup) +
-              '</code> کوین، یک‌بار');
+
+  /** یک خط راهنما برای هر فعالیت با پیکربندی زنده. */
+  const line = (label, value, extra) => '• ' + label + '\n   <code>' + value +
+              '</code>' + (extra || '');
+
+  const r = (k) => rw[k] || {};
+  if (r('signup').enabled && (r('signup').coins > 0)) {
+    earn.push(line(txt.earn_signup, fa(r('signup').coins) + ' کوین', '، یک‌بار'));
   }
-  if (rw.join > 0) {
-    earn.push('• ' + txt.earn_join + '\n   <code>' + fa(rw.join) +
-              '</code> کوین، یک‌بار');
+  if (r('join').enabled && (r('join').coins > 0)) {
+    earn.push(line(txt.earn_join, fa(r('join').coins) + ' کوین', '، یک‌بار'));
   }
-  earn.push(c.purchaseMode === 'relative'
-    ? '• ' + txt.earn_purchase + '\n   هر <code>' + fa(c.purchasePerAmount) +
-      '</code> تومان، <code>1</code> کوین'
-    : '• ' + txt.earn_purchase + '\n   هر خرید <code>' +
-      fa(c.purchaseFixed) + '</code> کوین');
-  if (rw.referral > 0) {
-    earn.push('• ' + txt.earn_referral + '\n   هر خرید <code>' +
-              fa(rw.referral) + '</code> کوین');
+  const pc = r('purchase');
+  if (pc.enabled) {
+    if (pc.mode === 'percent') {
+      earn.push(line(txt.earn_purchase, fa(pc.percent) + '٪ از مبلغ خرید',
+        pc.cap > 0 ? ' (حداکثر ' + fa(pc.cap) + ' کوین)' : ''));
+    } else if (pc.mode === 'per') {
+      earn.push('• ' + txt.earn_purchase + '\n   هر <code>' + fa(pc.perAmount) +
+                '</code> تومان، <code>1</code> کوین');
+    } else {
+      earn.push(line(txt.earn_purchase, fa(pc.coins) + ' کوین'));
+    }
   }
-  if (rw.mission > 0) {
-    earn.push('• ' + txt.earn_mission + '\n   هر ماموریت <code>' +
-              fa(rw.mission) + '</code> کوین');
+  if (r('first_purchase').enabled && (r('first_purchase').coins > 0)) {
+    earn.push(line(txt.earn_first_purchase, '+' + fa(r('first_purchase').coins) +
+      ' کوین', '، یک‌بار'));
+  }
+  if (r('referral').enabled && (r('referral').coins > 0)) {
+    earn.push(line(txt.earn_referral, '+' + fa(r('referral').coins) + ' کوین',
+      '، اولین خرید هر دعوت‌شده'));
+  }
+  const rp = r('ref_purchase');
+  if (rp.enabled && rp.percent > 0) {
+    earn.push(line(txt.earn_ref_purchase, fa(rp.percent) + '٪ از مبلغ خرید',
+      rp.cap > 0 ? ' (سقف ' + fa(rp.cap) + ' کوین)' : ''));
+  }
+  if (r('mission').enabled && (r('mission').coins > 0)) {
+    earn.push(line(txt.earn_mission, fa(r('mission').coins) + ' کوین'));
+  }
+  const dl = r('daily');
+  if (dl.enabled && (dl.coins > 0 || dl.percent > 0)) {
+    earn.push(line(txt.earn_daily, fa(dl.coins) + ' کوین هر روز',
+      ' — هر روز پیاپی تا ۲ برابر پاداش'));
   }
 
   let spend = 'هنوز محصولی تعریف نشده است.';
@@ -167,6 +195,35 @@ function screenBalance(uid) {
   return { text: text, markup: kb([
     [{ text: T.guide, callback_data: 'coin:help' }],
     [{ text: T.back, callback_data: 'coin' }]]) };
+}
+
+/**
+ * جایزه روزانه: با دکمه در منوی کوین. هر روز پیاپی پاداش زنجیره می‌گیرد.
+ */
+function doDaily(uid) {
+  const r = coin.claimDaily(uid);
+  const back = [{ text: T.back, callback_data: 'coin' }];
+  if (!r.ok) {
+    if (r.reason === 'امروز گرفتی') {
+      return {
+        text: '<b>' + T.daily + '</b>\n' + LINE + '\n\n' +
+              '✅ امروز دریافت کردی.\n' +
+              '🔥 زنجیره فعلی: <b>' + fa(r.streak) + '</b> روز پیاپی\n\n' +
+              '<i>فردا برگرد تا زنجیره ادامه پیدا کند.</i>',
+        markup: kb([back]),
+      };
+    }
+    return { text: '❌ ' + r.reason, markup: kb([back]) };
+  }
+  const bonus = r.mult > 1 ? '  <i>(پاداش زنجیره ×' + fa(r.mult) + ')</i>' : '';
+  return {
+    text: '<b>' + T.daily + '</b>\n' + LINE + '\n\n' +
+          '✅ <code>+' + fa(r.amount) + '</code> کوین' + bonus + '\n' +
+          '🔥 زنجیره: <b>' + fa(r.streak) + '</b> روز پیاپی\n' +
+          '💰 موجودی: <code>' + fa(r.balance) + '</code> کوین\n\n' +
+          '<i>هر روز سر بزن؛ زنجیره پاداش بیشتری می‌آورد.</i>',
+    markup: kb([back]),
+  };
 }
 
 function screenHistory(uid) {
@@ -341,6 +398,7 @@ async function route(ctx) {
 
   else if (d === 'coin:shop') s = screenShop(ctx.uid);
   else if (d === 'coin:help') s = screenGuide(ctx.uid);
+  else if (d === 'coin:daily') s = doDaily(ctx.uid);
   else if (d === 'coin:miss') s = screenSoon(T.missions);
   else if (d.startsWith('coin:poor:')) s = screenPoor(ctx.uid, d.slice(10));
   else if (d.startsWith('coin:buy:')) s = screenConfirm(ctx.uid, d.slice(9));
@@ -372,7 +430,8 @@ if (require.main === module) {
 
     const m = screenMenu('u9');
     a(m.text.includes('12'), 'موجودی در منو درست نمایش داده شد');
-    a(m.markup.inline_keyboard.length === 4, 'منو چهار ردیف دارد');
+    a(m.markup.inline_keyboard.length === 5, 'منو پنج ردیف دارد');
+    a(JSON.stringify(m.markup).includes('coin:daily'), 'دکمه جایزه روزانه هست');
     a(!JSON.stringify(m.markup).includes('coin:ref'), 'بخش دعوت حذف شد');
     a(JSON.stringify(m.markup).includes('"style":"success"'),
       'دکمه خرید سبز است');
@@ -478,11 +537,37 @@ if (require.main === module) {
       coin.setSetting('purchaseMode', 'relative');
       coin.setSetting('purchasePerAmount', 25000);
       g = screenGuide('u9');
-      a(g.text.includes('25,000'), 'راهنما حالت نسبی را درست نوشت');
+      a(g.text.includes('25,000'), 'راهنما حالت نسبی (هر ۲۵ هزار) را درست نوشت');
       coin.setSetting('purchaseMode', 'fixed');
       g = screenGuide('u9');
       a(!g.text.includes('25,000'), 'راهنما با تغییر حالت به‌روز شد');
+      coin.setRewardConfig('purchase', { mode: 'percent', percent: 3, cap: 50 });
+      g = screenGuide('u9');
+      a(g.text.includes('3٪ از مبلغ خرید') && g.text.includes('حداکثر 50 کوین'),
+        'راهنما حالت درصدی خرید را نشان داد');
+      coin.setRewardConfig('purchase', { mode: 'fixed', coins: 10 });
+      coin.setRewardConfig('ref_purchase', { percent: 7 });
+      g = screenGuide('u9');
+      a(g.text.includes('7٪ از مبلغ خرید') && g.text.includes('سقف 100 کوین'),
+        'راهنما جایزه خرید زیرمجموعه را نشان داد');
+      coin.setRewardConfig('ref_purchase', { percent: 5 });
       a(JSON.stringify(g.markup).includes('coin:shop'), 'راهنما دکمه فروشگاه دارد');
+
+      // ── جایزه روزانه
+      coin.setReward('daily', 7);
+      let dd = null;
+      await route({ data: 'coin:daily', uid: 'u9', config: {}, chatId: 1, messageId: 2,
+                    editTelegram: async (c, ch, mi, t) => { dd = t; } });
+      a(dd && dd.includes('+7') && dd.includes('1') && dd.includes('زنجیره'),
+        'جایزه روزانه روز اول داده شد');
+      await route({ data: 'coin:daily', uid: 'u9', config: {}, chatId: 1, messageId: 2,
+                    editTelegram: async (c, ch, mi, t) => { dd = t; } });
+      a(dd && dd.includes('امروز دریافت کردی'), 'جایزه روزانه تکراری رد شد');
+      coin.setRewardConfig('daily', { enabled: false });
+      await route({ data: 'coin:daily', uid: 'u9', config: {}, chatId: 1, messageId: 2,
+                    editTelegram: async (c, ch, mi, t) => { dd = t; } });
+      a(dd && dd.includes('غیرفعال'), 'جایزه روزانه غیرفعال پیام درست داد');
+      coin.setRewardConfig('daily', { enabled: true, coins: 5 });
 
       // ── متن‌های سفارشی
       coin.setText('guide_what', 'متن کاملاً سفارشی');
@@ -501,12 +586,13 @@ if (require.main === module) {
       coin.resetText('earn_join');
       coin.resetText('guide_rules');
       coin.resetText('menu_note');
-      a(screenMenu('u9').text.includes('نسخه 1.3.0'), 'نسخه جدید در منو نمایش داده شد');
+      a(screenMenu('u9').text.includes('نسخه 1.4.0'), 'نسخه جدید در منو نمایش داده شد');
 
       const mm = screenMenu('u9');
       a(mm.text.includes('راهنما') || JSON.stringify(mm.markup).includes('coin:help'),
         'دکمه راهنما در منو هست');
-      a(mm.markup.inline_keyboard.length === 4, 'منو چهار ردیف شد');
+      a(mm.markup.inline_keyboard.length === 5, 'منو پنج ردیف شد');
+      a(mm.text.includes('نسخه 1.4.0'), 'نسخه جدید در منو نمایش داده شد');
 
       let hit = null;
       await route({ data: 'coin:help', uid: 'u9', config: {}, chatId: 1, messageId: 2,
