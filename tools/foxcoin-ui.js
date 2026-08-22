@@ -2,7 +2,8 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN UI — رابط کاربری کوین
- *  نسخه: 1.4.0 | 2026-08-22 | فروشگاه + جوایز پیشرفته + جایزه روزانه + متن‌ها
+ *  نسخه: 1.4.1 | 2026-08-23 | فروشگاه + جوایز + روزانه + متن‌ها
+ *  ۱.۴.۱: محافظ هوک سرویس‌سازی — خرید به‌جای TypeError پیام روشن می‌دهد
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا ماژول جدا:
@@ -81,7 +82,7 @@ function screenMenu(uid) {
             '</code> کوین دیگر لازم دارید.\n\n')
       : '') +
     txt.menu_note + '\n\n' +
-    '<code>نسخه 1.4.0</code>';
+    '<code>نسخه 1.4.1</code>';
   return {
     text: text,
     markup: kb([
@@ -333,6 +334,17 @@ async function doPurchase(ctx, pid) {
   if (bal < p.coins) return screenPoor(uid, pid);
 
   if (busy.has(uid)) return screenError('یک درخواست شما در حال انجام است.');
+
+  // ربات باید دو تابع خودش را تزریق کند. اگر وصله bot.js آن‌ها را
+  // نداده باشد، قبلاً اینجا TypeError می‌خورد و خرید با «خطای
+  // داخلی» می‌مرد بی‌آنکه معلوم شود چرا. حالا صریح می‌گوییم.
+  if (typeof ctx.getPlans !== 'function' ||
+      typeof ctx.deliverService !== 'function') {
+    return screenError(
+      'فروشگاه هنوز به موتور سرویس‌سازی ربات وصل نشده است.\n' +
+      'کوین شما کم نشد. لطفاً به پشتیبانی اطلاع دهید.');
+  }
+
   busy.add(uid);
   try {
     const plans = await ctx.getPlans(ctx.env, p.cat);
@@ -586,13 +598,13 @@ if (require.main === module) {
       coin.resetText('earn_join');
       coin.resetText('guide_rules');
       coin.resetText('menu_note');
-      a(screenMenu('u9').text.includes('نسخه 1.4.0'), 'نسخه جدید در منو نمایش داده شد');
+      a(screenMenu('u9').text.includes('نسخه 1.4.1'), 'نسخه جدید در منو نمایش داده شد');
 
       const mm = screenMenu('u9');
       a(mm.text.includes('راهنما') || JSON.stringify(mm.markup).includes('coin:help'),
         'دکمه راهنما در منو هست');
       a(mm.markup.inline_keyboard.length === 5, 'منو پنج ردیف شد');
-      a(mm.text.includes('نسخه 1.4.0'), 'نسخه جدید در منو نمایش داده شد');
+      a(mm.text.includes('نسخه 1.4.1'), 'نسخه جدید در منو نمایش داده شد');
 
       let hit = null;
       await route({ data: 'coin:help', uid: 'u9', config: {}, chatId: 1, messageId: 2,

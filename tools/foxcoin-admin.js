@@ -2,7 +2,8 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.5.0 | 2026-08-22 | فاکس شاپ + موتور جوایز پیشرفته + متن‌ها
+ *  نسخه: 1.6.0 | 2026-08-23 | فاکس شاپ + موتور جوایز + متن‌ها
+ *  ۱.۶.۰: تشخیص نبود هوک getPlans + راه «افزودن دستی» محصول
  * ════════════════════════════════════════════════════════════════
  *
  *  این ماژول بخش مدیریت فاکس کوین است: آمار، تنظیمات، محصولات،
@@ -39,6 +40,7 @@ const T = {
   allUsers: '👥 همه کاربران',
   setBal: '🎯 تنظیم دقیق موجودی',
   autoName: '🔁 نام خودکار',
+  manualAdd: '✍️ افزودن دستی (بدون لیست پلن)',
   changePlan: '🛰 تغییر پلن',
   changeCat: '🔄 تغییر دسته',
   prices: '💵 قیمت پلن‌ها',
@@ -102,6 +104,21 @@ const REASON_FA = {
 };
 
 const LINE = '➖➖➖➖➖➖➖➖➖➖';
+
+/**
+ * چرا این پیام مهم است:
+ *   پنل پلن‌ها را خودش نمی‌سازد؛ ربات باید تابع getPlans را به آن
+ *   بدهد. وصله patch-foxcoin-admin.py این تابع را در ctx نمی‌گذاشت،
+ *   برای همین «محصول جدید» همیشه به بن‌بست می‌خورد. اگر باز هم
+ *   تزریق نشده باشد، به‌جای بن‌بست، راه دستی باز می‌ماند.
+ */
+const NO_PLANS_HINT =
+  '❌ لیست پلن‌های ربات در دسترس پنل نیست.\n\n' +
+  '<i>یعنی هوک <code>getPlans</code> به پنل تزریق نشده.\n' +
+  'روی سرور این را بزن:\n' +
+  '<code>python3 patch-foxcoin-plans.py --apply</code>\n' +
+  'و بعد <code>systemctl restart foxteam-bot</code></i>\n\n' +
+  'تا آن موقع با دکمه پایین، محصول را دستی بساز.';
 
 const EVENT_FA = {
   signup: 'جایزه ثبت‌نام',
@@ -196,7 +213,7 @@ function screenMenu() {
     '🪙 کوین در گردش\n<code>' + fa(s.circulating) + '</code>\n\n' +
     '📊 مجموع رویدادها\n<code>' + fa(s.events) + '</code>\n\n' +
     '<i>هر تغییر با دکمه انجام می‌شود و در دفتر کل ثبت می‌شود.</i>\n\n' +
-    '<code>نسخه 1.5.0</code>';
+    '<code>نسخه 1.6.0</code>';
   return {
     text: text,
     markup: kb([
@@ -577,6 +594,16 @@ async function routeText(ctx) {
   if (!pending) return false;
   const text = String(ctx && ctx.text || '').trim();
   if (!text || text === '/cancel') return false;
+
+  // حالت افزودن دستی محصول: متن، شناسه پلن است نه متن نمایشی.
+  if (pending.kind === 'plan') {
+    const planId = text.replace(/[<>\s]/g, '').slice(0, 64);
+    if (!planId) return false;
+    clearPending(uid);
+    return { kind: 'plan', cat: pending.cat, planId: planId,
+             next: 'admin:paddplan:' + pending.cat + ':' + planId };
+  }
+
   try {
     coin.setText(pending.key, text);
   } catch (e) {
@@ -757,8 +784,8 @@ async function screenPickProductPlan(ctx, id) {
   const head = '<b>' + T.changePlan + '</b>\n' + LINE + '\n\n' +
                '📦 ' + p.label + '\n' +
                'دسته: ' + (p.cat === 'days' ? '🗓 زمانی' : '📦 حجمی') + '\n\n';
-  if (!ctx.getPlans) {
-    return { text: head + '❌ ربات لیست پلن‌ها را در اختیار پنل نمی‌گذارد.',
+  if (typeof ctx.getPlans !== 'function') {
+    return { text: head + NO_PLANS_HINT,
              markup: kb([[{ text: T.back, callback_data: 'admin:pedit:' + id }]]) };
   }
   let plans = null;
@@ -848,6 +875,30 @@ function parseAddState(s) {
            coins: Number(parts[4]) || 0 };
 }
 
+/**
+ * افزودن دستی: وقتی لیست زنده پلن‌ها در دسترس نیست، ادمین شناسه
+ * پلن را متنی می‌فرستد. از همان سازوکار pendingEdits متن‌ها استفاده
+ * می‌کنیم تا هوک bot.js موجود (patch-foxcoin-texts.py) کافی باشد.
+ */
+function screenManualPlan(uid, cat) {
+  cat = (cat === 'days') ? 'days' : 'volume';
+  pendingEdits.set(String(uid), {
+    kind: 'plan', cat: cat, at: Date.now(),
+    prompt: '🛰 شناسه پلن را بفرست (مثلاً <code>44trir5v</code>).\n' +
+            '<i>در ربات، بخش مدیریت پلن‌ها، شناسه هر پلن دیده می‌شود.</i>',
+  });
+  return {
+    text: '<b>' + T.manualAdd + '</b>\n' + LINE + '\n\n' +
+          'دسته: ' + (cat === 'days' ? '🗓 زمانی' : '📦 حجمی') + '\n\n' +
+          '<b>شناسه پلن را همین‌جا بفرست.</b>\n\n' +
+          '<i>بعد از آن، حجم و مدت و قیمت را با دکمه تنظیم می‌کنی.\n' +
+          'اگر پیام «شناسه را بفرست» نیامد، از خط فرمان:\n' +
+          '<code>node foxcoin.js product-add \'{"id":"P1","planId":"...", ' +
+          '"cat":"' + cat + '","gb":30,"days":30,"coins":100}\'</code></i>',
+    markup: kb([[{ text: '🔙 انصراف', callback_data: 'admin:tcancel' }]]),
+  };
+}
+
 function screenPickCat() {
   const text =
     '<b>' + T.addProduct + '</b>\n' + LINE + '\n\n' +
@@ -863,11 +914,11 @@ function screenPickCat() {
 async function screenPickPlan(ctx, cat) {
   const head = '<b>' + T.addProduct + '</b>\n' + LINE + '\n\n' +
                'دسته: ' + (cat === 'days' ? '🗓 زمانی' : '📦 حجمی') + '\n\n';
-  if (!ctx.getPlans) {
-    return { text: head +
-             '❌ ربات لیست پلن‌ها را در اختیار پنل نمی‌گذارد.\n' +
-             '<i>محصول را از خط فرمان اضافه کنید.</i>',
-             markup: kb([[{ text: T.back, callback_data: 'admin:padd' }]]) };
+  if (typeof ctx.getPlans !== 'function') {
+    return { text: head + NO_PLANS_HINT,
+             markup: kb([
+               [{ text: T.manualAdd, callback_data: 'admin:paddman:' + cat }],
+               [{ text: T.back, callback_data: 'admin:padd' }]]) };
   }
   let plans = null;
   try { plans = await ctx.getPlans(ctx.env, cat); } catch (e) { plans = null; }
@@ -1492,6 +1543,7 @@ async function route(ctx) {
   else if (d === 'admin:products') s = screenProducts();
   else if (d === 'admin:shopstatus') s = toggleShop();
   else if (d === 'admin:padd') s = screenPickCat();
+  else if (d.startsWith('admin:paddman:')) s = screenManualPlan(ctx.uid, after(d, 'admin:paddman:'));
   else if (d.startsWith(P.paddcat)) s = await screenPickPlan(ctx, after(d, P.paddcat));
   else if (d.startsWith(P.paddplan)) s = screenAddGb(after(d, P.paddplan));
   else if (d.startsWith(P.paddgb)) s = screenAddDays(after(d, P.paddgb));

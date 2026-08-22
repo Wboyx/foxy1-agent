@@ -8,8 +8,9 @@
 | فایل | نقش |
 |---|---|
 | `foxcoin.js` | هسته (نسخه ۱.۶.۰): **موتور جوایز پیشرفته** + متن‌های سفارشی |
-| `foxcoin-ui.js` | رابط کاربری (۱.۴.۰): جوایز زنده + **جایزه روزانه** + متن‌های سفارشی |
-| `foxcoin-admin.js` | **پنل مدیریت (۱.۵.۰): ویرایشگر کامل جوایز + متن‌ها** |
+| `foxcoin-ui.js` | رابط کاربری (۱.۴.۱): جوایز زنده + جایزه روزانه + **محافظ هوک خرید** |
+| `foxcoin-admin.js` | **پنل مدیریت (۱.۶.۰): ویرایشگر جوایز + متن‌ها + افزودن دستی محصول** |
+| `patch-foxcoin-plans.py` | **وصله حیاتی: تزریق `getPlans` و `deliverService` به پنل و فروشگاه** |
 | `patch-foxcoin-admin.py` | وصله اتصال پنل به `bot.js` |
 | `patch-foxcoin-texts.py` | وصله دریافت متن از ادمین در `bot.js` (برای بخش متن‌ها) |
 | `patch-foxcoin-rewards.py` | وصله اتصال جوایز خرید به `bot.js` (هوک fulfillOrder) |
@@ -83,6 +84,52 @@
 
 تنظیم مربوطه: `shopEnabled` (در تنظیمات پنل هم قابل تغییر است؛
 از خط فرمان: `node foxcoin.js set shopEnabled false`).
+
+## ⚠️ اگر «محصول جدید» بن‌بست می‌خورد
+
+نشانه‌ها:
+
+- در پنل، «➕ محصول جدید» → انتخاب دسته → پیام
+  «❌ لیست پلن‌های ربات در دسترس پنل نیست»
+- کاربر در فروشگاه دکمه تأیید را می‌زند و هیچ اتفاقی نمی‌افتد
+
+علت: ماژول‌های کوین دو تابع را از خود ربات می‌گیرند —
+`getPlans` (لیست پلن‌ها) و `deliverService` (ساخت سرویس). وصله‌های
+فاز ۲ و ۳ این دو را در `ctx` نمی‌گذاشتند، پس پنل هیچ‌وقت پلنی
+نمی‌دید و خرید کاربر با `TypeError` می‌مرد.
+
+درمان — یک وصله:
+
+```bash
+cd /root/foxteam-bot
+curl -fsSL -o patch-foxcoin-plans.py https://raw.githubusercontent.com/Wboyx/foxy1-agent/main/tools/patch-foxcoin-plans.py
+python3 patch-foxcoin-plans.py          # نمایش برنامه + توابع کشف‌شده
+python3 patch-foxcoin-plans.py --apply  # اعمال واقعی
+systemctl restart foxteam-bot
+```
+
+اسکریپت نام توابع را خودش از `bot.js` پیدا می‌کند. اگر نام‌ها در
+ربات تو فرق دارد، خودش نامزدهای مشابه را فهرست می‌کند و می‌توانی
+دستی بدهی:
+
+```bash
+FOXCOIN_GETPLANS=loadPlans FOXCOIN_DELIVER=createService \
+    python3 patch-foxcoin-plans.py --apply
+```
+
+برگشت: `python3 patch-foxcoin-plans.py --revert`
+
+### راه دوم: افزودن دستی
+
+اگر وصله نخورد، پنل دیگر بن‌بست نیست: دکمه **«✍️ افزودن دستی»**
+می‌آید، شناسه پلن را متنی می‌فرستی و بقیه مراحل مثل قبل با دکمه
+پیش می‌رود. (نیازمند هوک `patch-foxcoin-texts.py`.)
+
+یا از خط فرمان:
+
+```bash
+node foxcoin.js product-add '{"id":"P1","label":"سی گیگ","planId":"44trir5v","cat":"volume","gb":30,"days":30,"coins":100}'
+```
 
 ## 🎁 جوایز فعالیت — موتور پیشرفته
 
@@ -265,6 +312,9 @@ python3 patch-foxcoin-texts.py --apply
 
 # ۴-ج) (برای اتصال جایزه خرید و اولین خرید به پرداخت واقعی):
 python3 patch-foxcoin-rewards.py --apply
+
+# ۴-د) ⚠️ حیاتی — بدون این، «محصول جدید» و «خرید» کار نمی‌کنند:
+python3 patch-foxcoin-plans.py --apply
 
 # ۵) ادمین‌ها را تعیین کن (یا در کانفیگ ربات):
 #    Environment=FOXCOIN_ADMINS=<شناسه عددی تو>
