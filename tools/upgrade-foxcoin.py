@@ -3,7 +3,7 @@
 """
 ════════════════════════════════════════════════════════════════
  UPGRADE FOXCOIN — ارتقای هسته کوین به نسخه کامل (محصول + مدیریت)
- نسخه: 2.1 | 2026-08-22
+ نسخه: 2.2 | 2026-08-22
 ════════════════════════════════════════════════════════════════
 
 چرا این اسکریپت:
@@ -142,6 +142,22 @@ function recentUsers(n) {
 function ledgerRecent(n) {
   return readLedger().slice(-(n || 20)).reverse();
 }
+
+/** همه کاربرانی که تاکنون رویداد یا موجودی داشته‌اند، بر اساس آخرین فعالیت. */
+function userList() {
+  const s = loadStore();
+  const seen = new Map();
+  for (const r of readLedger()) {
+    const uid = String(r.uid);
+    if (!seen.has(uid)) seen.set(uid, r.ts);
+  }
+  for (const uid of Object.keys(s.balances || {})) {
+    if (!seen.has(uid)) seen.set(uid, 0);
+  }
+  return [...seen.entries()]
+    .map(([uid, ts]) => ({ uid: uid, lastTs: ts }))
+    .sort((a, b) => b.lastTs - a.lastTs);
+}
 '''
 
 CLI_BLOCK = r'''    case 'products':
@@ -174,6 +190,7 @@ TESTS_BLOCK = r'''    'm.setProduct({id:"x1",label:"سی گیگ",planId:"44trir5
     'a(th.length===1 && th[0].uid==="u1" && th[0].balance===158,"دارندگان برتر مرتب شدند");',
     'a(m.recentUsers(3)[0]==="u1","کاربران اخیر پیدا شدند");',
     'a(m.ledgerRecent(3)[0].type==="spend","دفتر اخیر آخرین رویداد را اول می‌آورد");',
+    'a(m.userList().length===1 && m.userList()[0].uid==="u1","فهرست همه کاربران درست است");',
     'a(m.getCoinPrices().p1===50,"فهرست قیمت‌ها درست است");',
     'a(m.getSettings().shopEnabled===true,"فروشگاه کوینی پیش‌فرض باز است");',
     'm.setSetting("shopEnabled",false);',
@@ -183,7 +200,7 @@ TESTS_BLOCK = r'''    'm.setProduct({id:"x1",label:"سی گیگ",planId:"44trir5
 
 EXPORTS_BLOCK = r'''  getCoinPrices,
   listProducts, getProduct, setProduct, removeProduct,
-  topHolders, recentUsers, ledgerRecent,
+  topHolders, recentUsers, ledgerRecent, userList,
 '''
 
 # هر قدم: نشانه (اگر باشد یعنی قبلاً اضافه شده)، لنگرگاه، کجا، متن
@@ -206,8 +223,13 @@ STEPS = [
      "where": "before", "add": ADMIN_BLOCK + "\n"},
     {"name": "دستورهای خط فرمان",
      "marker": "case 'products':",
+    "anchor": "    case 'stats':",
+    "where": "before", "add": CLI_BLOCK},
+    {"name": "دستور فهرست کاربران",
+     "marker": "case 'users':",
      "anchor": "    case 'stats':",
-     "where": "before", "add": CLI_BLOCK},
+     "where": "before",
+     "add": "    case 'users':\n      return out(userList());\n"},
     {"name": "تست‌های محصول و مدیریت",
      "marker": "محصول کوینی ثبت شد",
      "anchor": "    'a(m.history(\"u1\",1)[0].type===\"spend\",\"آخرین رویداد خرج است\");',",

@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN — هسته اقتصاد کوین
- *  نسخه: 1.2.0 | 2026-08-22 | فاز ۱ + محصول + مدیریت + فروشگاه
+ *  نسخه: 1.3.0 | 2026-08-22 | فاز ۱ + محصول + مدیریت + فروشگاه + کاربران
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا فایل جدا:
@@ -314,6 +314,22 @@ function ledgerRecent(n) {
   return readLedger().slice(-(n || 20)).reverse();
 }
 
+/** همه کاربرانی که تاکنون رویداد یا موجودی داشته‌اند، بر اساس آخرین فعالیت. */
+function userList() {
+  const s = loadStore();
+  const seen = new Map();
+  for (const r of readLedger()) {
+    const uid = String(r.uid);
+    if (!seen.has(uid)) seen.set(uid, r.ts);
+  }
+  for (const uid of Object.keys(s.balances || {})) {
+    if (!seen.has(uid)) seen.set(uid, 0);
+  }
+  return [...seen.entries()]
+    .map(([uid, ts]) => ({ uid: uid, lastTs: ts }))
+    .sort((a, b) => b.lastTs - a.lastTs);
+}
+
 // ───────────────────────── گزارش ─────────────────────────
 
 function history(uid, limit) {
@@ -378,6 +394,8 @@ function cli() {
       return out(recentUsers(Number(a) || 10));
     case 'ledger':
       return out(ledgerRecent(Number(a) || 20));
+    case 'users':
+      return out(userList());
     case 'selftest':
       return selftest();
     default:
@@ -443,6 +461,7 @@ function selftest() {
     'const th=m.topHolders(5);',
     'a(th.length===1 && th[0].uid==="u1" && th[0].balance===158,"دارندگان برتر مرتب شدند");',
     'a(m.recentUsers(3)[0]==="u1","کاربران اخیر پیدا شدند");',
+    'a(m.userList().length===1 && m.userList()[0].uid==="u1","فهرست همه کاربران درست است");',
     'a(m.ledgerRecent(3)[0].type==="spend","دفتر اخیر آخرین رویداد را اول می‌آورد");',
     'const s=m.stats();',
     'a(s.events===4,"دفتر دقیقاً چهار رویداد موفق دارد");',
@@ -470,7 +489,7 @@ module.exports = {
   getSettings, setSetting, getBalance, addEvent, coinsForPurchase,
   claimMission, getCoinPrice, setCoinPrice, getCoinPrices, spendForPlan,
   listProducts, getProduct, setProduct, removeProduct,
-  topHolders, recentUsers, ledgerRecent,
+  topHolders, recentUsers, ledgerRecent, userList,
   history, stats, readLedger, DEFAULTS, EVENTS,
 };
 

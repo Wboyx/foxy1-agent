@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.1.0 | 2026-08-22 | فاز ۳ + مدیریت فاکس شاپ
+ *  نسخه: 1.2.0 | 2026-08-22 | فاز ۳ + فاکس شاپ + دست بازتر
  * ════════════════════════════════════════════════════════════════
  *
  *  این ماژول بخش مدیریت فاکس کوین است: آمار، تنظیمات، محصولات،
@@ -36,11 +36,30 @@ const T = {
   products: '🛍 فاکس شاپ',
   addProduct: '➕ محصول جدید',
   users: '👥 کاربران',
+  allUsers: '👥 همه کاربران',
+  setBal: '🎯 تنظیم دقیق موجودی',
+  autoName: '🔁 نام خودکار',
+  changePlan: '🛰 تغییر پلن',
+  changeCat: '🔄 تغییر دسته',
   prices: '💵 قیمت پلن‌ها',
   ledger: '📜 دفتر کل',
   help: '❓ راهنما',
   back: '⬅️ بازگشت',
   coinMenu: '🪙 منوی کوین',
+};
+
+/** دلیل‌های از پیش تعریف‌شده برای تغییر موجودی (بدون نیاز به تایپ). */
+const REASONS = [
+  ['gift', '🎁 هدیه'],
+  ['prize', '🏆 جایزه'],
+  ['fix', '🔧 جبران خطا'],
+  ['balance', '⚖️ تصحیح موجودی'],
+  ['other', '📝 سایر'],
+];
+
+const REASON_FA = {
+  gift: 'هدیه', prize: 'جایزه', fix: 'جبران خطا',
+  balance: 'تصحیح موجودی', other: 'سایر',
 };
 
 const LINE = '➖➖➖➖➖➖➖➖➖➖';
@@ -335,11 +354,72 @@ function screenProductEdit(id) {
     [{ text: '💾 حجم', callback_data: 'admin:pgb:' + p.id },
      { text: '⏱ مدت', callback_data: 'admin:pdays:' + p.id }],
     [{ text: '💎 قیمت کوینی', callback_data: 'admin:pcoins:' + p.id }],
+    [{ text: T.autoName, callback_data: 'admin:plabel:' + p.id },
+     { text: T.changePlan, callback_data: 'admin:pplan:' + p.id }],
+    [{ text: T.changeCat + ' (' + (p.cat === 'days' ? '🗓 زمانی' : '📦 حجمی') + ')',
+      callback_data: 'admin:pcat:' + p.id }],
     [{ text: p.active === false ? '▶️ فعال‌سازی' : '⏸ غیرفعال',
       callback_data: 'admin:ptoggle:' + p.id },
      { text: '🗑 حذف', callback_data: 'admin:pdel:' + p.id }],
     [{ text: T.back, callback_data: 'admin:products' }],
   ]) };
+}
+
+/** بازسازی نام محصول از نام پلن زنده + حجم + مدت. */
+async function doAutoLabel(ctx, id) {
+  const p = coin.getProduct(id);
+  if (!p) return screenProducts();
+  let label = p.planId;
+  try {
+    const plans = await ctx.getPlans(ctx.env, p.cat);
+    const plan = (plans || []).find(x => String(x.id) === String(p.planId));
+    if (plan && plan.name) label = plan.name;
+  } catch (e) { /* برچسب همان شناسه پلن می‌ماند */ }
+  if (p.gb > 0) label += ' — ' + fa(p.gb) + ' گیگ';
+  if (p.days > 0) label += ' — ' + fa(p.days) + ' روز';
+  coin.setProduct(Object.assign({}, p, { label: label }));
+  return screenProductEdit(id);
+}
+
+/** انتخاب پلن جدید برای محصول، از لیست زنده پلن‌های همان دسته. */
+async function screenPickProductPlan(ctx, id) {
+  const p = coin.getProduct(id);
+  if (!p) return screenProducts();
+  const head = '<b>' + T.changePlan + '</b>\n' + LINE + '\n\n' +
+               '📦 ' + p.label + '\n' +
+               'دسته: ' + (p.cat === 'days' ? '🗓 زمانی' : '📦 حجمی') + '\n\n';
+  if (!ctx.getPlans) {
+    return { text: head + '❌ ربات لیست پلن‌ها را در اختیار پنل نمی‌گذارد.',
+             markup: kb([[{ text: T.back, callback_data: 'admin:pedit:' + id }]]) };
+  }
+  let plans = null;
+  try { plans = await ctx.getPlans(ctx.env, p.cat); } catch (e) { plans = null; }
+  if (!plans || !plans.length) {
+    return { text: head + '❌ در این دسته پلنی پیدا نشد.',
+             markup: kb([[{ text: T.back, callback_data: 'admin:pedit:' + id }]]) };
+  }
+  const rows = plans.map(pl => ([
+    { text: (pl.name || pl.id) + '  <code>' + pl.id + '</code>',
+      callback_data: 'admin:pplanpick:' + id + ':' + pl.id },
+  ]));
+  rows.push([{ text: T.back, callback_data: 'admin:pedit:' + id }]);
+  return { text: head + '<i>پلن جدید را انتخاب کنید.</i>',
+           markup: kb(rows) };
+}
+
+function doChangePlan(id, planId) {
+  const p = coin.getProduct(id);
+  if (p) coin.setProduct(Object.assign({}, p, { planId: String(planId) }));
+  return screenProductEdit(id);
+}
+
+/** تغییر دسته (حجمی ↔ زمانی)؛ بعد از تغییر، پلن جدید انتخاب می‌شود. */
+async function doToggleCat(ctx, id) {
+  const p = coin.getProduct(id);
+  if (!p) return screenProducts();
+  const cat = p.cat === 'days' ? 'volume' : 'days';
+  coin.setProduct(Object.assign({}, p, { cat: cat }));
+  return screenPickProductPlan(ctx, id);
 }
 
 /** صفحه تنظیم یک فیلد عددی محصول با دکمه‌های +/−. */
@@ -625,7 +705,31 @@ function screenUsers() {
       }
     }
   }
+  rows.push([{ text: T.allUsers, callback_data: 'admin:allusers:0' }]);
   rows.push([{ text: T.back, callback_data: 'admin' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+/** همه کاربران با صفحه‌بندی — برای دسترسی به هر کاربری، حتی بدون فعالیت اخیر. */
+function screenAllUsers(page) {
+  const all = coin.userList();
+  const PER = 10;
+  const pages = Math.max(1, Math.ceil(all.length / PER));
+  const p = Math.min(Math.max(0, Number(page) || 0), pages - 1);
+  const slice = all.slice(p * PER, p * PER + PER);
+  let text = '<b>' + T.allUsers + '</b>\n' + LINE + '\n\n' +
+             '<i>' + fa(all.length) + ' کاربر — صفحه ' + (p + 1) + ' از ' +
+             pages + '</i>\n';
+  const rows = slice.map(u => ([
+    { text: '👤 ' + u.uid + '  —  ' + fa(coin.getBalance(u.uid)) + ' کوین',
+      callback_data: 'admin:user:' + u.uid },
+  ]));
+  const nav = [];
+  if (p > 0) nav.push({ text: '⬅️ قبلی', callback_data: 'admin:allusers:' + (p - 1) });
+  nav.push({ text: (p + 1) + ' / ' + pages, callback_data: 'admin:allusers:' + p });
+  if (p < pages - 1) nav.push({ text: '➡️ بعدی', callback_data: 'admin:allusers:' + (p + 1) });
+  rows.push(nav);
+  rows.push([{ text: T.back, callback_data: 'admin:users' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -666,6 +770,8 @@ function screenUser(uid) {
     [{ text: '➕ افزودن کوین', callback_data: 'admin:grant:' + uid,
       style: 'success' },
      { text: '➖ کسر کوین', callback_data: 'admin:revoke:' + uid }],
+    [{ text: T.setBal, callback_data: 'admin:setbal:' + uid + ':' +
+      coin.getBalance(uid) + ':other' }],
     [{ text: '📜 تاریخچه کامل', callback_data: 'admin:uhist:' + uid }],
     [{ text: T.back, callback_data: 'admin:users' }],
   ]) };
@@ -691,10 +797,11 @@ function screenUserHistory(uid) {
   ]) };
 }
 
-/** صفحه تنظیم مقدار افزودن/کسر. مقدار در خود دکمه‌ها حمل می‌شود. */
-function screenAdjust(icon, title, uid, amount, maxHint) {
+/** صفحه تنظیم مقدار افزودن/کسر. مقدار و دلیل در خود دکمه‌ها حمل می‌شود. */
+function screenAdjust(icon, title, uid, amount, maxHint, reason) {
   uid = String(uid);
   const amt = Math.max(0, Number(amount) || 0);
+  reason = REASON_FA[reason] ? reason : 'other';
   const prefix = title.indexOf('کسر') === -1 ? 'grant' : 'revoke';
   let text =
     '<b>' + icon + ' ' + title + '</b>\n' + LINE + '\n\n' +
@@ -702,35 +809,114 @@ function screenAdjust(icon, title, uid, amount, maxHint) {
     '💰 موجودی فعلی <code>' + fa(coin.getBalance(uid)) +
     '</code> کوین\n\n' +
     'مقدار\n<code>' + fa(amt) + '</code> کوین\n\n' +
+    '📌 دلیل: <b>' + REASON_FA[reason] + '</b>\n\n' +
     '<i>' + (maxHint || '') + '</i>';
   const go = [{ text: '✅ تأیید و ثبت (' + fa(amt) + ')',
-                callback_data: 'admin:' + prefix + 'go:' + uid + ':' + amt,
+                callback_data: 'admin:' + prefix + 'go:' + uid + ':' +
+                amt + ':' + reason,
                 style: 'success' }];
+  const reasonRow = REASONS.map(([k, label]) => ({
+    text: (k === reason ? '✅ ' : '') + label,
+    callback_data: 'admin:' + prefix + 'v:' + uid + ':' + amt + ':' + k,
+  }));
   return { text: text, markup: kb([
-    [{ text: '➕100', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + (amt + 100) },
-     { text: '➕50', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + (amt + 50) },
-     { text: '➕10', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + (amt + 10) }],
-    [{ text: '➖10', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + Math.max(0, amt - 10) },
-     { text: '➖50', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + Math.max(0, amt - 50) },
-     { text: '➖100', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + Math.max(0, amt - 100) }],
+    [{ text: '➕100', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + (amt + 100) + ':' + reason },
+     { text: '➕50', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + (amt + 50) + ':' + reason },
+     { text: '➕10', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + (amt + 10) + ':' + reason }],
+    [{ text: '➖10', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + Math.max(0, amt - 10) + ':' + reason },
+     { text: '➖50', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + Math.max(0, amt - 50) + ':' + reason },
+     { text: '➖100', callback_data: 'admin:' + prefix + 'v:' + uid + ':' + Math.max(0, amt - 100) + ':' + reason }],
+    reasonRow,
     amt > 0 ? go : [],
     [{ text: '⬅️ انصراف', callback_data: 'admin:user:' + uid }],
   ]) };
 }
 
-function screenGrant(uid, amount) {
+function screenGrant(uid, amount, reason) {
   return screenAdjust('➕', 'افزودن کوین', uid, amount,
-    'رویداد با نوع «اصلاح ادمین» در گردش حساب کاربر ثبت می‌شود.');
+    'رویداد با نوع «اصلاح ادمین» در گردش حساب کاربر ثبت می‌شود.', reason);
 }
 
-function screenRevoke(uid, amount) {
+function screenRevoke(uid, amount, reason) {
   return screenAdjust('➖', 'کسر کوین', uid, amount,
-    'بیش از موجودی قابل کسر نیست.');
+    'بیش از موجودی قابل کسر نیست.', reason);
 }
 
-function doAdjust(uid, amount, sign, doneLabel) {
+// ───────────────────────── تنظیم دقیق موجودی ─────────────────────────
+
+/**
+ * موجودی کاربر را دقیقاً روی عدد دلخواه می‌گذارد (نه +/−).
+ * اختلاف به‌صورت یک رویداد ادمین با دلیل در دفتر ثبت می‌شود.
+ */
+function screenSetBal(uid, target, reason) {
+  uid = String(uid);
+  const cur = coin.getBalance(uid);
+  const t = Math.max(0, Math.round(Number(target) || 0));
+  reason = REASON_FA[reason] ? reason : 'other';
+  const diff = t - cur;
+  let text =
+    '<b>' + T.setBal + '</b>\n' + LINE + '\n\n' +
+    '👤 کاربر <code>' + uid + '</code>\n\n' +
+    '💰 موجودی فعلی <code>' + fa(cur) + '</code> کوین\n' +
+    '🎯 موجودی جدید <code>' + fa(t) + '</code> کوین\n';
+  if (diff !== 0) {
+    text += '📊 تغییر: <code>' + (diff > 0 ? '+' : '') + fa(diff) +
+            '</code> کوین\n';
+  }
+  text += '\n📌 دلیل: <b>' + REASON_FA[reason] + '</b>\n\n' +
+          '<i>با تأیید، موجودی دقیقاً همان عدد می‌شود.</i>';
+  const reasonRow = REASONS.map(([k, label]) => ({
+    text: (k === reason ? '✅ ' : '') + label,
+    callback_data: 'admin:setbal:' + uid + ':' + t + ':' + k,
+  }));
+  return { text: text, markup: kb([
+    [{ text: '➖1000', callback_data: 'admin:setbal:' + uid + ':' + Math.max(0, t - 1000) + ':' + reason },
+     { text: '➖100', callback_data: 'admin:setbal:' + uid + ':' + Math.max(0, t - 100) + ':' + reason },
+     { text: '➖10', callback_data: 'admin:setbal:' + uid + ':' + Math.max(0, t - 10) + ':' + reason },
+     { text: '➖1', callback_data: 'admin:setbal:' + uid + ':' + Math.max(0, t - 1) + ':' + reason }],
+    [{ text: '➕1', callback_data: 'admin:setbal:' + uid + ':' + (t + 1) + ':' + reason },
+     { text: '➕10', callback_data: 'admin:setbal:' + uid + ':' + (t + 10) + ':' + reason },
+     { text: '➕100', callback_data: 'admin:setbal:' + uid + ':' + (t + 100) + ':' + reason },
+     { text: '➕1000', callback_data: 'admin:setbal:' + uid + ':' + (t + 1000) + ':' + reason }],
+    reasonRow,
+    [{ text: '✅ ثبت موجودی (' + fa(t) + ')',
+       callback_data: 'admin:setbalgo:' + uid + ':' + t + ':' + reason,
+       style: 'success' }],
+    [{ text: '⬅️ انصراف', callback_data: 'admin:user:' + uid }],
+  ]) };
+}
+
+function doSetBal(uid, target, reason) {
+  uid = String(uid);
+  const cur = coin.getBalance(uid);
+  const t = Math.max(0, Math.round(Number(target) || 0));
+  reason = REASON_FA[reason] ? reason : 'other';
+  if (t === cur) {
+    return { text: '⚠️ موجودی همین مقدار است؛ تغییری لازم نبود.',
+             markup: kb([[{ text: '👤 بازگشت به کاربر',
+                            callback_data: 'admin:user:' + uid }]]) };
+  }
+  const r = coin.addEvent(uid, 'admin', t - cur,
+                          { note: REASON_FA[reason] + ' — تنظیم دقیق' });
+  if (!r.ok) {
+    return { text: '❌ ' + r.reason, markup: kb([
+      [{ text: '👤 بازگشت به کاربر', callback_data: 'admin:user:' + uid }]]) };
+  }
+  return {
+    text: '<b>✅ موجودی تنظیم شد</b>\n' + LINE + '\n\n' +
+          '👤 <code>' + uid + '</code>\n' +
+          '💰 قبلی <code>' + fa(cur) + '</code> → جدید <code>' +
+          fa(r.balance) + '</code> کوین\n\n' +
+          '<i>دلیل: ' + REASON_FA[reason] + ' — در گردش حساب ثبت شد.</i>',
+    markup: kb([[{ text: '👤 بازگشت به کاربر',
+                   callback_data: 'admin:user:' + uid }]]),
+  };
+}
+
+function doAdjust(uid, amount, sign, reason, doneLabel) {
   uid = String(uid);
   const amt = Math.round(Number(amount));
+  reason = REASON_FA[reason] ? reason : 'other';
   if (!Number.isFinite(amt) || amt <= 0) {
     return { text: '❌ مقدار نامعتبر است.', markup: kb([
       [{ text: T.back, callback_data: 'admin:user:' + uid }]]) };
@@ -744,7 +930,8 @@ function doAdjust(uid, amount, sign, doneLabel) {
   let r;
   try {
     r = coin.addEvent(uid, 'admin', sign * amt,
-                      { note: doneLabel + ' از پنل مدیریت' });
+                      { note: REASON_FA[reason] + ' — ' + doneLabel +
+                        ' از پنل مدیریت' });
   } finally {
     busy.delete(key);
   }
@@ -755,6 +942,7 @@ function doAdjust(uid, amount, sign, doneLabel) {
   return {
     text: '<b>' + (sign < 0 ? '➖' : '➕') + ' ثبت شد</b>\n' + LINE + '\n\n' +
           '<code>' + fa(amt) + '</code> کوین ' + doneLabel + '.\n' +
+          '📌 دلیل: ' + REASON_FA[reason] + '\n' +
           '💰 موجودی جدید: <code>' + fa(r.balance) + '</code> کوین\n\n' +
           '<i>در گردش حساب کاربر ثبت شد.</i>',
     markup: kb([[{ text: '👤 بازگشت به کاربر',
@@ -762,12 +950,12 @@ function doAdjust(uid, amount, sign, doneLabel) {
   };
 }
 
-function doGrant(uid, amount) {
-  return doAdjust(uid, amount, 1, 'به کاربر اضافه شد');
+function doGrant(uid, amount, reason) {
+  return doAdjust(uid, amount, 1, reason || 'gift', 'به کاربر اضافه شد');
 }
 
-function doRevoke(uid, amount) {
-  return doAdjust(uid, amount, -1, 'از کاربر کسر شد');
+function doRevoke(uid, amount, reason) {
+  return doAdjust(uid, amount, -1, reason || 'balance', 'از کاربر کسر شد');
 }
 
 // ───────────────────────── قیمت پلن‌ها ─────────────────────────
@@ -892,6 +1080,10 @@ const P = {
   paddcat: 'admin:paddcat:', paddplan: 'admin:paddplan:',
   paddgb: 'admin:paddgb:', padddays: 'admin:padddays:',
   paddcoins: 'admin:paddcoins:', paddgo: 'admin:paddgo:',
+  plabel: 'admin:plabel:', pplan: 'admin:pplan:',
+  pplanpick: 'admin:pplanpick:', pcat: 'admin:pcat:',
+  setbal: 'admin:setbal:', setbalgo: 'admin:setbalgo:',
+  allusers: 'admin:allusers:',
   user: 'admin:user:', uhist: 'admin:uhist:',
   grant: 'admin:grant:', grantv: 'admin:grantv:', grantgo: 'admin:grantgo:',
   revoke: 'admin:revoke:', revokev: 'admin:revokev:',
@@ -940,7 +1132,22 @@ async function route(ctx) {
   else if (d.startsWith(P.pdaysv)) {
     const [id, v] = after(d, P.pdaysv).split(':');
     s = applyNumField(id, 'days', v);
-  } else if (d === 'admin:users') s = screenUsers();
+  } else if (d.startsWith(P.plabel)) s = await doAutoLabel(ctx, after(d, P.plabel));
+  else if (d.startsWith(P.pplan)) s = await screenPickProductPlan(ctx, after(d, P.pplan));
+  else if (d.startsWith(P.pplanpick)) {
+    const [id, pl] = after(d, P.pplanpick).split(':');
+    s = doChangePlan(id, pl);
+  } else if (d.startsWith(P.pcat)) s = await doToggleCat(ctx, after(d, P.pcat));
+  else if (d === 'admin:users') s = screenUsers();
+  else if (d === 'admin:allusers') s = screenAllUsers(0);
+  else if (d.startsWith(P.allusers)) s = screenAllUsers(Number(after(d, P.allusers)) || 0);
+  else if (d.startsWith(P.setbal)) {
+    const parts = after(d, P.setbal).split(':');
+    s = screenSetBal(parts[0], Number(parts[1]) || 0, parts[2] || 'other');
+  } else if (d.startsWith(P.setbalgo)) {
+    const parts = after(d, P.setbalgo).split(':');
+    s = doSetBal(parts[0], Number(parts[1]) || 0, parts[2] || 'other');
+  }
   else if (d === 'admin:prices') s = screenPrices();
   else if (d === 'admin:ledger') s = screenLedger();
   else if (d === 'admin:help') s = screenHelp();
@@ -968,21 +1175,21 @@ async function route(ctx) {
   } else if (d.startsWith(P.uhist)) {
     s = screenUserHistory(after(d, P.uhist));
   } else if (d.startsWith(P.grant)) {
-    s = screenGrant(after(d, P.grant), 0);
+    s = screenGrant(after(d, P.grant), 0, 'gift');
   } else if (d.startsWith(P.grantv)) {
-    const [u, amt] = after(d, P.grantv).split(':');
-    s = screenGrant(u, amt);
+    const [u, amt, r] = after(d, P.grantv).split(':');
+    s = screenGrant(u, amt, r);
   } else if (d.startsWith(P.grantgo)) {
-    const [u, amt] = after(d, P.grantgo).split(':');
-    s = doGrant(u, amt);
+    const [u, amt, r] = after(d, P.grantgo).split(':');
+    s = doGrant(u, amt, r);
   } else if (d.startsWith(P.revoke)) {
-    s = screenRevoke(after(d, P.revoke), 0);
+    s = screenRevoke(after(d, P.revoke), 0, 'balance');
   } else if (d.startsWith(P.revokev)) {
-    const [u, amt] = after(d, P.revokev).split(':');
-    s = screenRevoke(u, amt);
+    const [u, amt, r] = after(d, P.revokev).split(':');
+    s = screenRevoke(u, amt, r);
   } else if (d.startsWith(P.revokego)) {
-    const [u, amt] = after(d, P.revokego).split(':');
-    s = doRevoke(u, amt);
+    const [u, amt, r] = after(d, P.revokego).split(':');
+    s = doRevoke(u, amt, r);
   } else if (d.startsWith(P.price)) {
     s = screenPrice(after(d, P.price));
   } else if (d.startsWith(P.pricev)) {
@@ -1013,8 +1220,8 @@ function adminMenuRows(opts) {
 
 module.exports = { route, isAdmin, adminMenuRows, T,
                    screenMenu, screenStats, screenSettings, screenProducts,
-                   screenUsers, screenPrices, screenLedger, screenHelp,
-                   doGrant, doRevoke };
+                   screenUsers, screenAllUsers, screenPrices, screenLedger,
+                   screenHelp, doGrant, doRevoke, doSetBal };
 
 // ───────────────────────── خودآزمون ─────────────────────────
 
@@ -1133,6 +1340,22 @@ if (require.main === module) {
       await go('admin:ptoggle:' + np.id);
       a(coin.getProduct(np.id).active === false, 'محصول جدید غیرفعال شد');
 
+      // ── ویرایش کامل محصول: نام خودکار، تغییر پلن، تغییر دسته
+      const plans2 = [{ id: 'PL1', name: 'نقره‌ای' }, { id: 'PL2', name: 'طلایی' }];
+      const getPlans2 = async () => plans2;
+      await go('admin:plabel:' + np.id, null, { getPlans: getPlans2 });
+      a(coin.getProduct(np.id).label.includes('نقره‌ای'),
+        'نام خودکار از نام پلن ساخته شد');
+      await go('admin:pplan:' + np.id, null, { getPlans: getPlans2 });
+      a(JSON.stringify(sent.markup).includes('طلایی'),
+        'لیست پلن‌ها برای تغییر باز شد');
+      await go('admin:pplanpick:' + np.id + ':PL2');
+      a(coin.getProduct(np.id).planId === 'PL2', 'پلن محصول عوض شد');
+      await go('admin:pcat:' + np.id, null, { getPlans: getPlans2 });
+      a(coin.getProduct(np.id).cat === 'days', 'دسته محصول عوض شد');
+      await go('admin:pcat:' + np.id, null, { getPlans: getPlans2 });
+      a(coin.getProduct(np.id).cat === 'volume', 'دسته محصول برگشت');
+
       // ── قیمت پلن‌ها
       await go('admin:pricev:PL9:50');
       a(coin.getCoinPrice('PL9') === 50, 'قیمت پلن تنظیم شد');
@@ -1159,6 +1382,37 @@ if (require.main === module) {
       await go('admin:revokev:u7:99999');
       await go('admin:revokego:u7:99999');
       a(coin.getBalance('u7') === 45, 'کسر بیش از موجودی رد شد');
+
+      // ── دلیل در افزودن/کسر
+      await go('admin:grantv:u7:10:prize');
+      a(sent.text.includes('جایزه'), 'دلیل انتخاب‌شده نمایش داده شد');
+      await go('admin:grantgo:u7:10:prize');
+      a(coin.history('u7', 1)[0].meta.note.includes('جایزه'),
+        'دلیل جایزه در دفتر ثبت شد');
+
+      // ── تنظیم دقیق موجودی
+      await go('admin:setbal:u7:100:gift');
+      a(sent.text.includes('موجودی جدید') && sent.text.includes('100'),
+        'صفحه تنظیم دقیق باز شد');
+      await go('admin:setbalgo:u7:100:gift');
+      a(coin.getBalance('u7') === 100, 'موجودی دقیقاً ۱۰۰ شد');
+      a(coin.history('u7', 1)[0].meta.note.includes('هدیه'),
+        'دلیل هدیه در تنظیم دقیق ثبت شد');
+      await go('admin:setbalgo:u7:100:gift');
+      a(coin.getBalance('u7') === 100, 'بدون تغییر، دست نمی‌زند');
+      await go('admin:setbal:u7:0:balance');
+      await go('admin:setbalgo:u7:0:balance');
+      a(coin.getBalance('u7') === 0, 'صفر کردن موجودی کار کرد');
+      await go('admin:setbal:u7:300:fix');
+      await go('admin:setbalgo:u7:300:fix');
+      a(coin.getBalance('u7') === 300, 'بازگرداندن موجودی کار کرد');
+
+      // ── همه کاربران
+      await go('admin:allusers:0');
+      a(JSON.stringify(sent.markup).includes('u7') &&
+        JSON.stringify(sent.markup).includes('u9'),
+        'همه کاربران فهرست شدند');
+      a(sent.text.includes('صفحه 1'), 'صفحه‌بندی نمایش داده شد');
 
       // ── دفتر کل و مسیر ناشناخته
       await go('admin:ledger');
