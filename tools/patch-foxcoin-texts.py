@@ -3,7 +3,7 @@
 """
 ════════════════════════════════════════════════════════════════
  PATCH FOXCOIN TEXTS — دریافت متن از ادمین در bot.js
- نسخه: 1.0 | 2026-08-22
+ نسخه: 1.1 | 2026-08-23
 ════════════════════════════════════════════════════════════════
 
 چه می‌کند:
@@ -41,6 +41,7 @@
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -98,6 +99,62 @@ def check_env():
     return problems
 
 
+
+def enclosing_body(src, pos):
+    """
+    بدنه تابعی که `pos` داخل آن است را برگردان.
+
+    چرا لازم است: نسخه اول پنجره ثابت ۳۵۰۰ نویسه می‌گرفت و از مرز
+    تابع رد می‌شد — یک دستگیره بی‌ربط، `text` تابع بعدی را می‌دید و
+    برنده می‌شد. هوک در تابع اشتباه می‌نشست و چون آنجا `text` تعریف
+    نشده بود، ربات موقع هر پیام کرش می‌کرد.
+    """
+    starts = [m.start() for m in re.finditer(
+        r"(?:^|\n)\s*(?:async\s+)?function\s+\w+\s*\(", src)
+        if m.start() < pos]
+    begin = starts[-1] if starts else 0
+    nxt = re.search(r"\n\s*(?:async\s+)?function\s+\w+\s*\(",
+                    src[pos:])
+    end = pos + nxt.start() if nxt else len(src)
+    return src[begin:end]
+
+
+def pick_message_site(src):
+    """
+    وقتی `const state = await getState(...)` چندبار در bot.js هست،
+    کدام‌یک دستگیره پیام متنی است؟
+
+    معیار: در بدنه همان تابع، هم متغیر `text` باشد و هم setState.
+    دستگیره‌های دیگر (کالبک، اینلاین، جوین) این ترکیب را ندارند.
+    امتیاز بیشتر برای تابعی که isAdmin هم دارد — بخش مدیریت
+    متن‌ها همان‌جاست.
+
+    خروجی: (offset پایان لنگرگاه، توضیح) یا (None, "")
+    """
+    best = None
+    for cand in MESSAGE_ANCHORS:
+        start = 0
+        while True:
+            i = src.find(cand, start)
+            if i < 0:
+                break
+            start = i + len(cand)
+            body = enclosing_body(src, i)
+            has_text = re.search(r"\btext\b", body) is not None
+            has_set = "setState(" in body
+            has_admin = "isAdmin(" in body
+            if has_text and has_set:
+                score = 2 + (1 if has_admin else 0)
+                if best is None or score > best[0]:
+                    best = (score, start,
+                            "%s — تابعی که text+setState%s دارد"
+                            % (cand.strip(),
+                               "+isAdmin" if has_admin else ""))
+    if best is None:
+        return None, ""
+    return best[1], best[2]
+
+
 def plan(src):
     rows = []
     ok = True
@@ -111,16 +168,24 @@ def plan(src):
             rows.append(("هوک پیام متنی", "یکتا ✅ (%s)" % cand.strip()))
             break
     if not msg_anchor:
-        # گزارش بهترین نامزد
-        best = None
-        for cand in MESSAGE_ANCHORS:
-            n = src.count(cand)
-            if n > 0:
-                best = "%s (%d بار)" % (cand.strip(), n)
-                break
-        rows.append(("هوک پیام متنی",
-                     "پیدا نشد ❌" if not best else "%s ❌" % best))
-        ok = False
+        # لنگرگاه چندبار تکرار شده (bot.js واقعی چند دستگیره پیام
+        # دارد). به‌جای تسلیم‌شدن، تابعی را پیدا کن که واقعاً پیام
+        # متنی ادمین را می‌گیرد: باید هم `text` و هم setState داشته
+        # باشد. آن یکی نقطه درست تزریق است.
+        pick, why = pick_message_site(src)
+        if pick is not None:
+            msg_anchor = pick
+            rows.append(("هوک پیام متنی", "انتخاب هوشمند ✅ (%s)" % why))
+        else:
+            best = None
+            for cand in MESSAGE_ANCHORS:
+                n = src.count(cand)
+                if n > 0:
+                    best = "%s (%d بار)" % (cand.strip(), n)
+                    break
+            rows.append(("هوک پیام متنی",
+                         "پیدا نشد ❌" if not best else "%s ❌" % best))
+            ok = False
 
     # قدم ۲: هوک کالبک
     n = src.count(CALLBACK_ANCHOR)
@@ -134,8 +199,11 @@ def plan(src):
 
 def apply_patch(src, msg_anchor):
     out = src
-    i = out.index(msg_anchor)
-    j = i + len(msg_anchor)
+    # msg_anchor یا رشته یکتاست، یا offset پایانِ نقطه انتخاب‌شده
+    if isinstance(msg_anchor, int):
+        j = msg_anchor
+    else:
+        j = out.index(msg_anchor) + len(msg_anchor)
     out = out[:j] + MESSAGE_HOOK + out[j:]
 
     # بلوک کالبک باید قبل از `if (handledByAdmin) return;` بنشیند،
