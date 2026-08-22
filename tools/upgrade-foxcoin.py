@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 ════════════════════════════════════════════════════════════════
- UPGRADE FOXCOIN — ارتقای هسته کوین به نسخه محصول‌دار
- نسخه: 1.0 | 2026-08-21
+ UPGRADE FOXCOIN — ارتقای هسته کوین به نسخه کامل (محصول + مدیریت)
+ نسخه: 2.0 | 2026-08-22
 ════════════════════════════════════════════════════════════════
 
 چرا این اسکریپت:
@@ -13,13 +13,22 @@
 چه می‌کند:
   ۱. بررسی می‌کند فایل همان نسخه قدیمی شناخته‌شده باشد
   ۲. بکاپ می‌گیرد
-  ۳. بخش محصول کوینی و دستورهای آن را اضافه می‌کند
+  ۳. بخش محصول کوینی، ابزار مدیریت (دارندگان برتر، کاربران اخیر،
+     دفتر کل، فهرست قیمت‌ها) و دستورهای خط فرمان را اضافه می‌کند
   ۴. فهرست خروجی ماژول را کامل می‌کند
   ۵. نحو را چک می‌کند و اگر خراب بود برمی‌گرداند
+
+تفاوت با نسخه ۱:
+  هر بخش نشانه (marker) خودش را دارد. اگر نشانه باشد، آن بخش رد
+  می‌شود. پس اسکریپت هم روی نسخه فاز ۱ و هم روی نسخه نیمه‌ارتقا
+  درست کار می‌کند — چند بار اجرا هم ضرری ندارد.
 
 استفاده:
   python3 upgrade-foxcoin.py            نمایش برنامه
   python3 upgrade-foxcoin.py --apply    اعمال
+
+برای تست در محیط دیگر (بدون لمس سرور):
+  FOXCOIN_TARGET=/tmp/x/foxcoin.js python3 upgrade-foxcoin.py --apply
 """
 
 import os
@@ -28,9 +37,10 @@ import subprocess
 import sys
 import time
 
-TARGET = "/root/foxteam-bot/foxcoin.js"
+TARGET = os.environ.get("FOXCOIN_TARGET", "/root/foxteam-bot/foxcoin.js")
 
-PRODUCTS_BLOCK = '''
+# ── بخش محصول کوینی (دقیقاً همان کد نسخه مخزن) ─────────────────────
+PRODUCTS_BLOCK = r'''
 // ───────────────────────── محصول کوینی ─────────────────────────
 
 /**
@@ -84,7 +94,52 @@ function removeProduct(id) {
 }
 '''
 
-CLI_BLOCK = '''    case 'products':
+# ── فهرست همه قیمت‌های ثبت‌شده ────────────────────────────────────
+PRICES_BLOCK = r'''
+
+/** همه قیمت‌های ثبت‌شده (شناسه پلن → کوین). برای پنل مدیریت. */
+function getCoinPrices() {
+  const s = loadStore();
+  return Object.assign({}, s.coinPrices || {});
+}
+'''
+
+# ── ابزار مدیریت (برای پنل مدیریت) ────────────────────────────────
+ADMIN_BLOCK = r'''
+// ───────────────────────── ابزار مدیریت ─────────────────────────
+
+/** دارندگان برتر، از بیشترین موجودی. برای پنل مدیریت. */
+function topHolders(n) {
+  const s = loadStore();
+  return Object.entries(s.balances || {})
+    .map(([uid, bal]) => ({ uid: uid, balance: Number(bal || 0) }))
+    .filter(x => x.balance > 0)
+    .sort((a, b) => b.balance - a.balance)
+    .slice(0, n || 10);
+}
+
+/** شناسه کاربرانی که اخیراً رویداد داشته‌اند، جدیدترین اول. */
+function recentUsers(n) {
+  const seen = new Set();
+  const out = [];
+  for (const r of readLedger().slice().reverse()) {
+    const uid = String(r.uid);
+    if (!seen.has(uid)) {
+      seen.add(uid);
+      out.push(uid);
+    }
+    if (out.length >= (n || 10)) break;
+  }
+  return out;
+}
+
+/** آخرین رویدادهای دفتر کل، جدیدترین اول. */
+function ledgerRecent(n) {
+  return readLedger().slice(-(n || 20)).reverse();
+}
+'''
+
+CLI_BLOCK = r'''    case 'products':
       return out(listProducts());
     case 'product-add': {
       const o = JSON.parse(a);
@@ -92,31 +147,62 @@ CLI_BLOCK = '''    case 'products':
     }
     case 'product-del':
       return out({ removed: removeProduct(a) });
+    case 'prices':
+      return out(getCoinPrices());
+    case 'top':
+      return out(topHolders(Number(a) || 10));
+    case 'recent':
+      return out(recentUsers(Number(a) || 10));
+    case 'ledger':
+      return out(ledgerRecent(Number(a) || 20));
 '''
 
-TESTS_BLOCK = """    'm.setProduct({id:\\"x1\\",label:\\"سی گیگ\\",planId:\\"44trir5v\\",cat:\\"volume\\",gb:30,days:30,coins:100});',
-    'a(m.listProducts().length===1,\\"محصول کوینی ثبت شد\\");',
-    'a(m.getProduct(\\"x1\\").coins===100,\\"قیمت محصول درست است\\");',
-    'm.setProduct({id:\\"x2\\",label:\\"ارزان\\",planId:\\"cm1698h4\\",cat:\\"volume\\",gb:10,days:30,coins:40});',
-    'a(m.listProducts()[0].id===\\"x2\\",\\"محصولات از ارزان به گران مرتب شدند\\");',
-    'let bad=false; try{m.setProduct({id:\\"x3\\"})}catch(e){bad=true} a(bad,\\"محصول ناقص رد شد\\");',
-    'a(m.removeProduct(\\"x1\\")===true,\\"محصول حذف شد\\");',
-"""
+TESTS_BLOCK = r'''    'm.setProduct({id:"x1",label:"سی گیگ",planId:"44trir5v",cat:"volume",gb:30,days:30,coins:100});',
+    'a(m.listProducts().length===1,"محصول کوینی ثبت شد");',
+    'a(m.getProduct("x1").coins===100,"قیمت محصول درست است");',
+    'm.setProduct({id:"x2",label:"ارزان",planId:"cm1698h4",cat:"volume",gb:10,days:30,coins:40});',
+    'a(m.listProducts()[0].id==="x2","محصولات از ارزان به گران مرتب شدند");',
+    'let bad=false; try{m.setProduct({id:"x3"})}catch(e){bad=true} a(bad,"محصول ناقص رد شد");',
+    'a(m.removeProduct("x1")===true,"محصول حذف شد");',
+    'a(m.listProducts().length===1,"فهرست پس از حذف درست شد");',
+    'const th=m.topHolders(5);',
+    'a(th.length===1 && th[0].uid==="u1" && th[0].balance===158,"دارندگان برتر مرتب شدند");',
+    'a(m.recentUsers(3)[0]==="u1","کاربران اخیر پیدا شدند");',
+    'a(m.ledgerRecent(3)[0].type==="spend","دفتر اخیر آخرین رویداد را اول می‌آورد");',
+    'a(m.getCoinPrices().p1===50,"فهرست قیمت‌ها درست است");',
+'''
 
+EXPORTS_BLOCK = r'''  getCoinPrices,
+  listProducts, getProduct, setProduct, removeProduct,
+  topHolders, recentUsers, ledgerRecent,
+'''
+
+# هر قدم: نشانه (اگر باشد یعنی قبلاً اضافه شده)، لنگرگاه، کجا، متن
 STEPS = [
     {"name": "بخش محصول کوینی",
+     "marker": "function listProducts(",
      "anchor": "// ───────────────────────── گزارش ─────────────────────────",
      "where": "before", "add": PRODUCTS_BLOCK + "\n"},
+    {"name": "فهرست قیمت‌ها",
+     "marker": "function getCoinPrices(",
+     "anchor": "  return getCoinPrice(planId);\n}",
+     "where": "after", "add": PRICES_BLOCK},
+    {"name": "ابزار مدیریت",
+     "marker": "function topHolders(",
+     "anchor": "// ───────────────────────── ابزار خط فرمان ─────────────────────────",
+     "where": "before", "add": ADMIN_BLOCK + "\n"},
     {"name": "دستورهای خط فرمان",
-     "anchor": "    case 'stats':\n      return out(stats());",
+     "marker": "case 'products':",
+     "anchor": "    case 'stats':",
      "where": "before", "add": CLI_BLOCK},
-    {"name": "تست‌های محصول",
+    {"name": "تست‌های محصول و مدیریت",
+     "marker": "محصول کوینی ثبت شد",
      "anchor": "    'a(m.history(\"u1\",1)[0].type===\"spend\",\"آخرین رویداد خرج است\");',",
      "where": "after", "add": "\n" + TESTS_BLOCK.rstrip("\n")},
     {"name": "فهرست خروجی ماژول",
+     "marker": "listProducts, getProduct, setProduct, removeProduct,",
      "anchor": "  claimMission, getCoinPrice, setCoinPrice, spendForPlan,",
-     "where": "after",
-     "add": "\n  listProducts, getProduct, setProduct, removeProduct,"},
+     "where": "after", "add": "\n" + EXPORTS_BLOCK.rstrip("\n")},
 ]
 
 
@@ -131,24 +217,29 @@ def main():
         return 1
     src = open(TARGET, encoding="utf-8").read()
 
-    if "listProducts" in src:
-        print("این فایل از قبل نسخه محصول‌دار است. کاری لازم نیست.")
-        return 0
-
-    print("\nبررسی لنگرگاه‌ها")
+    print("\nبررسی قدم‌ها")
     ok = True
+    todo = []
     for st in STEPS:
+        if st["marker"] in src:
+            print("   %-22s قبلاً هست ✅ (رد شد)" % st["name"])
+            continue
         n = src.count(st["anchor"])
         print("   %-22s %s" % (st["name"],
               "یکتا ✅" if n == 1 else ("پیدا نشد ❌" if n == 0 else "%d بار ❌" % n)))
         if n != 1:
             ok = False
+        else:
+            todo.append(st)
     if not ok:
-        print("\nلنگرگاه‌ها درست نیستند. هیچ تغییری اعمال نشد.")
+        print("\nیک یا چند لنگرگاه درست نیست. هیچ تغییری اعمال نشد.")
         return 1
+    if not todo:
+        print("\nهمه‌چیز از قبل کامل است. کاری لازم نیست.")
+        return 0
 
     if "--apply" not in sys.argv:
-        print("\nبرای اعمال واقعی:")
+        print("\nاین فقط نمایش برنامه بود. برای اعمال واقعی:")
         print("   python3 upgrade-foxcoin.py --apply")
         return 0
 
@@ -157,7 +248,7 @@ def main():
     print("\nبکاپ:", bak)
 
     out = src
-    for st in STEPS:
+    for st in todo:
         i = out.index(st["anchor"])
         if st["where"] == "before":
             out = out[:i] + st["add"] + out[i:]
@@ -179,6 +270,7 @@ def main():
     print("\nحالا خودآزمون بگیر:")
     print("   node foxcoin.js selftest | tail -3")
     print("   node foxcoin-ui.js | tail -3")
+    print("   node foxcoin-admin.js | tail -3")
     print("\nاگر خراب شد، برگشت:")
     print("   cp -a " + bak + " " + TARGET)
     return 0

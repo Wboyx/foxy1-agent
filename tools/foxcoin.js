@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN — هسته اقتصاد کوین
- *  نسخه: 1.0.0 | 2026-08-21 | فاز ۱
+ *  نسخه: 1.1.0 | 2026-08-22 | فاز ۱ + محصول + مدیریت
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا فایل جدا:
@@ -20,7 +20,8 @@
  *    می‌ماند. اول در فایل موقت می‌نویسیم بعد جابه‌جا می‌کنیم.
  *    جابه‌جایی در سیستم‌فایل اتمی است.
  *
- *  این فاز رابط کاربری ندارد. فقط هسته و ابزار خط فرمان.
+ *  این فایل در مخزن کامل است. روی سرورهای قدیمی، upgrade-foxcoin.py
+ *  دقیقاً همین نسخه را از روی نسخه فاز ۱ می‌سازد.
  */
 
 const fs = require('fs');
@@ -215,11 +216,101 @@ function setCoinPrice(planId, coins) {
   return getCoinPrice(planId);
 }
 
+/** همه قیمت‌های ثبت‌شده (شناسه پلن → کوین). برای پنل مدیریت. */
+function getCoinPrices() {
+  const s = loadStore();
+  return Object.assign({}, s.coinPrices || {});
+}
+
 /** خرج‌کردن برای یک محصول. صدور اشتراک کار ربات است، نه این ماژول. */
 function spendForPlan(uid, planId) {
   const price = getCoinPrice(planId);
   if (price === null) return { ok: false, reason: 'این محصول با کوین فروخته نمی‌شود' };
   return addEvent(uid, 'spend', -price, { plan: planId });
+}
+
+// ───────────────────────── محصول کوینی ─────────────────────────
+
+/**
+ * محصول کوینی یک بسته از پیش تعریف‌شده است، نه پلن خام.
+ *
+ * چرا این‌طور: در خرید تومانی، ربات از کاربر نام‌کاربری و حجم
+ * می‌پرسد و برای آن حالت گفت‌وگویی لازم است. در فروشگاه کوینی
+ * همه‌چیز از قبل مشخص است، پس کاربر فقط یک دکمه می‌زند.
+ */
+function listProducts() {
+  const s = loadStore();
+  return Object.values(s.products || {})
+    .filter(p => p && p.active !== false)
+    .sort((a, b) => (a.coins || 0) - (b.coins || 0));
+}
+
+function getProduct(id) {
+  const s = loadStore();
+  return (s.products || {})[String(id)] || null;
+}
+
+function setProduct(p) {
+  if (!p || !p.id) throw new Error('محصول باید شناسه داشته باشد');
+  for (const k of ['planId', 'cat', 'coins']) {
+    if (p[k] === undefined || p[k] === null || p[k] === '') {
+      throw new Error('فیلد لازم پر نشده: ' + k);
+    }
+  }
+  const s = loadStore();
+  s.products = s.products || {};
+  s.products[String(p.id)] = {
+    id: String(p.id),
+    label: p.label || String(p.id),
+    planId: String(p.planId),
+    cat: String(p.cat),
+    gb: Number(p.gb || 0),
+    days: Number(p.days || 0),
+    coins: Math.max(0, Math.round(Number(p.coins))),
+    active: p.active !== false,
+  };
+  saveStore(s);
+  return s.products[String(p.id)];
+}
+
+function removeProduct(id) {
+  const s = loadStore();
+  if (!s.products || !s.products[String(id)]) return false;
+  delete s.products[String(id)];
+  saveStore(s);
+  return true;
+}
+
+// ───────────────────────── ابزار مدیریت ─────────────────────────
+
+/** دارندگان برتر، از بیشترین موجودی. برای پنل مدیریت. */
+function topHolders(n) {
+  const s = loadStore();
+  return Object.entries(s.balances || {})
+    .map(([uid, bal]) => ({ uid: uid, balance: Number(bal || 0) }))
+    .filter(x => x.balance > 0)
+    .sort((a, b) => b.balance - a.balance)
+    .slice(0, n || 10);
+}
+
+/** شناسه کاربرانی که اخیراً رویداد داشته‌اند، جدیدترین اول. */
+function recentUsers(n) {
+  const seen = new Set();
+  const out = [];
+  for (const r of readLedger().slice().reverse()) {
+    const uid = String(r.uid);
+    if (!seen.has(uid)) {
+      seen.add(uid);
+      out.push(uid);
+    }
+    if (out.length >= (n || 10)) break;
+  }
+  return out;
+}
+
+/** آخرین رویدادهای دفتر کل، جدیدترین اول. */
+function ledgerRecent(n) {
+  return readLedger().slice(-(n || 20)).reverse();
 }
 
 // ───────────────────────── گزارش ─────────────────────────
@@ -263,8 +354,24 @@ function cli() {
     case 'price':
       return out({ plan: a, coins: b === undefined ? getCoinPrice(a)
                                                    : setCoinPrice(a, Number(b)) });
+    case 'prices':
+      return out(getCoinPrices());
     case 'stats':
       return out(stats());
+    case 'products':
+      return out(listProducts());
+    case 'product-add': {
+      const o = JSON.parse(a);
+      return out(setProduct(o));
+    }
+    case 'product-del':
+      return out({ removed: removeProduct(a) });
+    case 'top':
+      return out(topHolders(Number(a) || 10));
+    case 'recent':
+      return out(recentUsers(Number(a) || 10));
+    case 'ledger':
+      return out(ledgerRecent(Number(a) || 20));
     case 'selftest':
       return selftest();
     default:
@@ -278,6 +385,13 @@ function cli() {
         '  node foxcoin.js history <شناسه> [تعداد]',
         '  node foxcoin.js price <شناسه پلن> [کوین]',
         '  node foxcoin.js stats',
+        '  node foxcoin.js products',
+        '  node foxcoin.js product-add \'{"id":"P1","label":"سی گیگ",',
+        '      "planId":"44trir5v","cat":"volume","gb":30,"days":30,"coins":100}\'',
+        '  node foxcoin.js product-del <شناسه محصول>',
+        '  node foxcoin.js top [تعداد]',
+        '  node foxcoin.js recent [تعداد]',
+        '  node foxcoin.js ledger [تعداد]',
       ].join('\n'));
   }
 }
@@ -306,7 +420,20 @@ function selftest() {
     'm.setCoinPrice("p1",50);',
     'a(m.getCoinPrice("p1")===50,"قیمت کوینی ثبت شد");',
     'a(m.getCoinPrice("nope")===null,"محصول بدون قیمت کوینی نال است");',
+    'a(m.getCoinPrices().p1===50,"فهرست قیمت‌ها درست است");',
     'a(m.spendForPlan("u1","p1").ok,"خرید کوینی انجام شد");',
+    'm.setProduct({id:"x1",label:"سی گیگ",planId:"44trir5v",cat:"volume",gb:30,days:30,coins:100});',
+    'a(m.listProducts().length===1,"محصول کوینی ثبت شد");',
+    'a(m.getProduct("x1").coins===100,"قیمت محصول درست است");',
+    'm.setProduct({id:"x2",label:"ارزان",planId:"cm1698h4",cat:"volume",gb:10,days:30,coins:40});',
+    'a(m.listProducts()[0].id==="x2","محصولات از ارزان به گران مرتب شدند");',
+    'let bad=false; try{m.setProduct({id:"x3"})}catch(e){bad=true} a(bad,"محصول ناقص رد شد");',
+    'a(m.removeProduct("x1")===true,"محصول حذف شد");',
+    'a(m.listProducts().length===1,"فهرست پس از حذف درست شد");',
+    'const th=m.topHolders(5);',
+    'a(th.length===1 && th[0].uid==="u1" && th[0].balance===158,"دارندگان برتر مرتب شدند");',
+    'a(m.recentUsers(3)[0]==="u1","کاربران اخیر پیدا شدند");',
+    'a(m.ledgerRecent(3)[0].type==="spend","دفتر اخیر آخرین رویداد را اول می‌آورد");',
     'const s=m.stats();',
     'a(s.events===4,"دفتر دقیقاً چهار رویداد موفق دارد");',
     'a(s.issued===208,"جمع صادرشده ۲۰۸ است");',
@@ -331,7 +458,9 @@ function selftest() {
 
 module.exports = {
   getSettings, setSetting, getBalance, addEvent, coinsForPurchase,
-  claimMission, getCoinPrice, setCoinPrice, spendForPlan,
+  claimMission, getCoinPrice, setCoinPrice, getCoinPrices, spendForPlan,
+  listProducts, getProduct, setProduct, removeProduct,
+  topHolders, recentUsers, ledgerRecent,
   history, stats, readLedger, DEFAULTS, EVENTS,
 };
 
