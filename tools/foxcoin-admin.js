@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.2.0 | 2026-08-22 | فاز ۳ + فاکس شاپ + دست بازتر
+ *  نسخه: 1.3.0 | 2026-08-22 | فاز ۳ + فاکس شاپ + دست بازتر + جوایز
  * ════════════════════════════════════════════════════════════════
  *
  *  این ماژول بخش مدیریت فاکس کوین است: آمار، تنظیمات، محصولات،
@@ -43,6 +43,7 @@ const T = {
   changeCat: '🔄 تغییر دسته',
   prices: '💵 قیمت پلن‌ها',
   ledger: '📜 دفتر کل',
+  rewards: '🎁 جوایز فعالیت',
   help: '❓ راهنما',
   back: '⬅️ بازگشت',
   coinMenu: '🪙 منوی کوین',
@@ -68,10 +69,19 @@ const EVENT_FA = {
   signup: 'جایزه ثبت‌نام',
   mission: 'ماموریت',
   purchase: 'خرید',
-  referral: 'زیرمجموعه',
+  referral: 'دعوت دوستان',
   spend: 'خرید با کوین',
   admin: 'اصلاح ادمین',
   reset: 'صفرسازی',
+  join: 'جوین کانال',
+};
+
+/** برچسب فارسی هر فعالیت جایزه‌دار. */
+const REWARD_LABELS = {
+  signup: 'ثبت‌نام در ربات',
+  join: 'جوین کانال/گروه',
+  referral: 'دعوت دوستان (پس از خرید)',
+  mission: 'انجام ماموریت',
 };
 
 /** برچسب فارسی هر کلید تنظیمات، برای پنل. */
@@ -185,10 +195,16 @@ function screenStats() {
 
 // ───────────────────────── تنظیمات ─────────────────────────
 
+/** کلیدهایی که به صفحه جوایز منتقل شده‌اند و اینجا نشان داده نمی‌شوند. */
+const HIDDEN_SETTINGS = ['signupReward', 'referralReward'];
+
 function screenSettings() {
   const c = coin.getSettings();
   const rows = [];
+  rows.push([{ text: T.rewards, callback_data: 'admin:rewards',
+               style: 'success' }]);
   for (const key of Object.keys(coin.DEFAULTS)) {
+    if (HIDDEN_SETTINGS.includes(key)) continue;
     const label = SETTING_FA[key] || key;
     const val = c[key];
     const isNum = typeof val === 'number';
@@ -213,8 +229,88 @@ function screenSettings() {
   const text =
     '<b>' + T.settings + '</b>\n' + LINE + '\n\n' +
     '<i>روی هر آیتم بزنید تا ویرایش شود.\n' +
-    'گروه گزارش و رویدادهای گزارش فقط از خط فرمان تغییر می‌کنند.</i>';
+    'گروه گزارش و رویدادهای گزارش فقط از خط فرمان تغییر می‌کنند.\n' +
+    'جوایز فعالیت (ثبت‌نام، جوین، دعوت، ماموریت) از «' + T.rewards +
+    '» تنظیم می‌شود.</i>';
   return { text: text, markup: kb(rows) };
+}
+
+// ───────────────────────── جوایز فعالیت ─────────────────────────
+
+/**
+ * جوایز هر فعالیت. برای هر کار می‌توان کوین دلخواه تعیین کرد:
+ * ثبت‌نام، جوین کانال، دعوت دوستان، ماموریت — و هر فعالیت سفارشی.
+ * مقدارها از هسته زنده خوانده می‌شوند.
+ */
+function screenRewards() {
+  const rw = coin.getRewards();
+  const defKeys = Object.keys(coin.REWARD_DEFAULTS || {});
+  const customKeys = Object.keys(rw).filter(k => !defKeys.includes(k));
+  let text = '<b>' + T.rewards + '</b>\n' + LINE + '\n\n' +
+             '<i>برای هر فعالیت، کوین دلخواه تعیین کنید.\n' +
+             'روی هر آیتم بزنید تا ویرایش شود.</i>\n';
+  const rows = [];
+  for (const key of [...defKeys, ...customKeys]) {
+    const label = REWARD_LABELS[key] || key;
+    const custom = customKeys.includes(key) ? ' ⭐' : '';
+    rows.push([{ text: label + custom + '\n<code>' + fa(rw[key]) +
+                '</code> کوین',
+                 callback_data: 'admin:rcoins:' + key }]);
+  }
+  rows.push([{ text: T.back, callback_data: 'admin:settings' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+/** صفحه ویرایش مقدار یک فعالیت. */
+function screenRewardEdit(key) {
+  const rw = coin.getRewards();
+  if (!(key in rw)) return screenRewards();
+  const label = REWARD_LABELS[key] || key;
+  const cur = rw[key];
+  const def = (coin.REWARD_DEFAULTS || {})[key];
+  const isCustom = def === undefined;
+  let text =
+    '<b>🎁 ' + label + '</b>\n' + LINE + '\n\n' +
+    'جایزه فعلی\n<code>' + fa(cur) + '</code> کوین\n\n' +
+    '<i>هر دکمه همان لحظه اعمال می‌شود.\n' +
+    'صفر یعنی این فعالیت جایزه ندارد.</i>';
+  const rows = [
+    [{ text: '➖100', callback_data: 'admin:rcoinsv:' + key + ':-100' },
+     { text: '➖10', callback_data: 'admin:rcoinsv:' + key + ':-10' },
+     { text: '➖1', callback_data: 'admin:rcoinsv:' + key + ':-1' }],
+    [{ text: '➕1', callback_data: 'admin:rcoinsv:' + key + ':1' },
+     { text: '➕10', callback_data: 'admin:rcoinsv:' + key + ':10' },
+     { text: '➕100', callback_data: 'admin:rcoinsv:' + key + ':100' }],
+  ];
+  if (!isCustom) {
+    rows.push([{ text: '↩️ پیش‌فرض: ' + fa(def),
+                 callback_data: 'admin:rreset:' + key }]);
+  } else {
+    rows.push([{ text: '🗑 حذف فعالیت', callback_data: 'admin:rdel:' + key,
+                 style: 'danger' }]);
+  }
+  rows.push([{ text: T.back, callback_data: 'admin:rewards' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+function applyReward(key, delta) {
+  try {
+    const cur = Number(coin.getRewards()[key]) || 0;
+    coin.setReward(key, Math.max(0, cur + Number(delta)));
+  } catch (e) { /* کلید نامعتبر */ }
+  return screenRewardEdit(key);
+}
+
+function resetReward(key) {
+  try {
+    coin.setReward(key, (coin.REWARD_DEFAULTS || {})[key] || 0);
+  } catch (e) { /* ignore */ }
+  return screenRewardEdit(key);
+}
+
+function deleteReward(key) {
+  coin.removeRewardAction(key);
+  return screenRewards();
 }
 
 function screenSetting(key) {
@@ -1084,6 +1180,8 @@ const P = {
   pplanpick: 'admin:pplanpick:', pcat: 'admin:pcat:',
   setbal: 'admin:setbal:', setbalgo: 'admin:setbalgo:',
   allusers: 'admin:allusers:',
+  rcoins: 'admin:rcoins:', rcoinsv: 'admin:rcoinsv:',
+  rreset: 'admin:rreset:', rdel: 'admin:rdel:',
   user: 'admin:user:', uhist: 'admin:uhist:',
   grant: 'admin:grant:', grantv: 'admin:grantv:', grantgo: 'admin:grantgo:',
   revoke: 'admin:revoke:', revokev: 'admin:revokev:',
@@ -1147,7 +1245,13 @@ async function route(ctx) {
   } else if (d.startsWith(P.setbalgo)) {
     const parts = after(d, P.setbalgo).split(':');
     s = doSetBal(parts[0], Number(parts[1]) || 0, parts[2] || 'other');
-  }
+  } else if (d === 'admin:rewards') s = screenRewards();
+  else if (d.startsWith(P.rcoins)) s = screenRewardEdit(after(d, P.rcoins));
+  else if (d.startsWith(P.rcoinsv)) {
+    const [k, v] = after(d, P.rcoinsv).split(':');
+    s = applyReward(k, v);
+  } else if (d.startsWith(P.rreset)) s = resetReward(after(d, P.rreset));
+  else if (d.startsWith(P.rdel)) s = deleteReward(after(d, P.rdel));
   else if (d === 'admin:prices') s = screenPrices();
   else if (d === 'admin:ledger') s = screenLedger();
   else if (d === 'admin:help') s = screenHelp();
@@ -1221,7 +1325,7 @@ function adminMenuRows(opts) {
 module.exports = { route, isAdmin, adminMenuRows, T,
                    screenMenu, screenStats, screenSettings, screenProducts,
                    screenUsers, screenAllUsers, screenPrices, screenLedger,
-                   screenHelp, doGrant, doRevoke, doSetBal };
+                   screenRewards, screenHelp, doGrant, doRevoke, doSetBal };
 
 // ───────────────────────── خودآزمون ─────────────────────────
 
@@ -1414,9 +1518,30 @@ if (require.main === module) {
         'همه کاربران فهرست شدند');
       a(sent.text.includes('صفحه 1'), 'صفحه‌بندی نمایش داده شد');
 
+      // ── جوایز فعالیت
+      await go('admin:rewards');
+      a(sent.text.includes('جوایز') &&
+        JSON.stringify(sent.markup).includes('جوین'),
+        'صفحه جوایز باز شد');
+      await go('admin:rcoins:join');
+      a(sent.text.includes('10'), 'جایزه فعلی جوین نمایش داده شد');
+      await go('admin:rcoinsv:join:5');
+      a(coin.getRewards().join === 15, 'جایزه جوین با دکمه تغییر کرد');
+      await go('admin:rreset:join');
+      a(coin.getRewards().join === 10, 'ریست جایزه به پیش‌فرض کار کرد');
+      coin.addRewardAction('daily', 7);
+      await go('admin:rcoins:daily');
+      a(sent.text.includes('7'), 'فعالیت سفارشی در پنل دیده شد');
+      await go('admin:rcoinsv:daily:3');
+      a(coin.getRewards().daily === 10, 'جایزه فعالیت سفارشی ویرایش شد');
+      await go('admin:rdel:daily');
+      a(!('daily' in coin.getRewards()), 'فعالیت سفارشی حذف شد');
+      await go('admin:rdel:join');
+      a(coin.getRewards().join === 10, 'پیش‌فرض با حذف حذف نمی‌شود');
+
       // ── دفتر کل و مسیر ناشناخته
       await go('admin:ledger');
-      a(sent.text.includes('زیرمجموعه'), 'دفتر کل نام فارسی رویداد را نشان داد');
+      a(sent.text.includes('دعوت دوستان'), 'دفتر کل نام فارسی رویداد را نشان داد');
       await go('admin:xyz');
       a(sent.text.includes('مدیریت فاکس کوین'), 'مسیر ناشناخته به منوی مدیریت رفت');
 

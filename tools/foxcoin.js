@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN — هسته اقتصاد کوین
- *  نسخه: 1.3.0 | 2026-08-22 | فاز ۱ + محصول + مدیریت + فروشگاه + کاربران
+ *  نسخه: 1.4.0 | 2026-08-22 | فاز ۱ + محصول + مدیریت + فروشگاه + جوایز
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا فایل جدا:
@@ -33,7 +33,7 @@ const STORE = path.join(DATA_DIR, 'coin-store.json');
 const LEDGER = path.join(DATA_DIR, 'coin-ledger.jsonl');
 
 const EVENTS = ['signup', 'mission', 'purchase', 'referral',
-                'spend', 'admin', 'reset'];
+                'spend', 'admin', 'reset', 'join'];
 
 const DEFAULTS = {
   enabled: true,
@@ -199,6 +199,89 @@ function claimMission(uid, missionId, reward) {
   s2.claimed[key] = Date.now();
   saveStore(s2);
   return r;
+}
+
+// ───────────────────────── جوایز فعالیت ─────────────────────────
+
+/** جوایز پیش‌فرض هر فعالیت. مقدار هر کدام از پنل مدیریت قابل تغییر است. */
+const REWARD_DEFAULTS = { signup: 5, join: 10, referral: 10, mission: 3 };
+
+/** هر فعالیت چه نوع رویدادی در دفتر می‌سازد. */
+const REWARD_EVENT = { signup: 'signup', join: 'join',
+                       referral: 'referral', mission: 'mission' };
+
+/**
+ * جوایز همه فعالیت‌ها.
+ * اولویت: تنظیمات ذخیره‌شده > کلیدهای قدیمی (signupReward/referralReward)
+ * > پیش‌فرض. پس از مهاجرت، مقدار از همین‌جا خوانده می‌شود.
+ */
+function getRewards() {
+  const s = loadStore();
+  const out = {};
+  const cfg = s.settings || {};
+  for (const [k, legacy] of [['signup', 'signupReward'],
+                             ['referral', 'referralReward']]) {
+    if (cfg[legacy] !== undefined) out[k] = Number(cfg[legacy]) || 0;
+  }
+  return Object.assign({}, REWARD_DEFAULTS, out, s.rewards || {});
+}
+
+function setReward(key, coins) {
+  key = String(key);
+  const cur = getRewards();
+  if (!(key in cur)) throw new Error('کلید جایزه ناشناخته: ' + key);
+  const s = loadStore();
+  s.rewards = s.rewards || {};
+  s.rewards[key] = Math.max(0, Math.round(Number(coins)));
+  saveStore(s);
+  return getRewards()[key];
+}
+
+/** افزودن فعالیت جایزه‌دار سفارشی (مثلاً بازدید روزانه). */
+function addRewardAction(key, coins) {
+  key = String(key);
+  if (!/^[a-z0-9_]{2,20}$/.test(key)) throw new Error('کلید جایزه نامعتبر');
+  const s = loadStore();
+  s.rewards = s.rewards || {};
+  s.rewards[key] = Math.max(0, Math.round(Number(coins)) || 0);
+  saveStore(s);
+  return getRewards()[key];
+}
+
+/** حذف فعالیت سفارشی. پیش‌فرض‌ها حذف نمی‌شوند. */
+function removeRewardAction(key) {
+  const s = loadStore();
+  if (!s.rewards || !(key in s.rewards)) return false;
+  if (key in REWARD_DEFAULTS) return false;
+  delete s.rewards[key];
+  saveStore(s);
+  return true;
+}
+
+/**
+ * دادن جایزه یک فعالیت به کاربر. هر فعالیت برای هر کاربر فقط یک بار.
+ * نوع رویداد بر اساس فعالیت: signup/join/referral/mission.
+ */
+function grantReward(uid, key) {
+  key = String(key);
+  const coins = Number(getRewards()[key]);
+  if (!coins || coins <= 0) {
+    return { ok: false, reason: 'جایزه این فعالیت صفر یا تعریف‌نشده است' };
+  }
+  const claimKey = 'r:' + String(uid) + ':' + key;
+  const s = loadStore();
+  s.claimed = s.claimed || {};
+  if (s.claimed[claimKey]) return { ok: false, reason: 'قبلاً دریافت شده' };
+
+  const type = REWARD_EVENT[key] || 'mission';
+  const res = addEvent(uid, type, coins, { action: key });
+  if (!res.ok) return res;
+
+  const s2 = loadStore();
+  s2.claimed = s2.claimed || {};
+  s2.claimed[claimKey] = Date.now();
+  saveStore(s2);
+  return res;
 }
 
 /** قیمت کوینی یک محصول. اگر تعریف نشده باشد، یعنی با کوین فروخته نمی‌شود. */
@@ -378,6 +461,15 @@ function cli() {
                                                    : setCoinPrice(a, Number(b)) });
     case 'prices':
       return out(getCoinPrices());
+    case 'rewards':
+      return out(getRewards());
+    case 'reward':
+      return out({ key: a, coins: b === undefined ? getRewards()[a]
+                                                  : setReward(a, Number(b)) });
+    case 'reward-add':
+      return out({ key: a, coins: addRewardAction(a, Number(b)) });
+    case 'reward-del':
+      return out({ removed: removeRewardAction(a) });
     case 'stats':
       return out(stats());
     case 'products':
@@ -416,6 +508,10 @@ function cli() {
         '  node foxcoin.js top [تعداد]',
         '  node foxcoin.js recent [تعداد]',
         '  node foxcoin.js ledger [تعداد]',
+        '  node foxcoin.js rewards',
+        '  node foxcoin.js reward <کلید> [کوین]',
+        '  node foxcoin.js reward-add <کلید> <کوین>',
+        '  node foxcoin.js reward-del <کلید>',
       ].join('\n'));
   }
 }
@@ -472,6 +568,21 @@ function selftest() {
     'a(m.history("u1",99).length===4,"تاریخچه کامل برگشت");',
     'a(m.history("u1",2).length===2,"تاریخچه محدود شد");',
     'a(m.history("u1",1)[0].type==="spend","آخرین رویداد خرج است");',
+    'const rw0=m.getRewards();',
+    'a(rw0.signup===5 && rw0.join===10 && rw0.mission===3,"جوایز پیش‌فرض درست است");',
+    'm.setReward("join",0);',
+    'a(!m.grantReward("u1","join").ok,"جایزه صفر رد شد");',
+    'm.setReward("join",10);',
+    'a(m.grantReward("u1","join").ok,"جایزه جوین داده شد");',
+    'a(!m.grantReward("u1","join").ok,"جایزه جوین فقط یک بار است");',
+    'a(m.getBalance("u1")===168,"موجودی با جوین درست شد");',
+    'a(m.grantReward("u1","referral").ok,"جایزه دعوت داده شد");',
+    'a(m.getBalance("u1")===178,"موجودی با دعوت درست شد");',
+    'm.addRewardAction("daily",7);',
+    'a(m.getRewards().daily===7,"فعالیت سفارشی اضافه شد");',
+    'a(m.grantReward("u1","daily").ok,"جایزه فعالیت سفارشی داده شد");',
+    'a(m.removeRewardAction("daily")===true,"فعالیت سفارشی حذف شد");',
+    'a(m.removeRewardAction("join")===false,"پیش‌فرض حذف نمی‌شود");',
     'console.log("\\nهمه تست‌ها گذشتند.");',
   ].join('\n');
   const f = path.join(tmp, 't.js');
@@ -490,7 +601,8 @@ module.exports = {
   claimMission, getCoinPrice, setCoinPrice, getCoinPrices, spendForPlan,
   listProducts, getProduct, setProduct, removeProduct,
   topHolders, recentUsers, ledgerRecent, userList,
-  history, stats, readLedger, DEFAULTS, EVENTS,
+  getRewards, setReward, addRewardAction, removeRewardAction, grantReward,
+  history, stats, readLedger, DEFAULTS, EVENTS, REWARD_DEFAULTS,
 };
 
 if (require.main === module) cli();

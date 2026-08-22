@@ -99,6 +99,116 @@ SHOP_BLOCK = r'''
   shopEnabled: true,          // فروشگاه کوینی باز/بسته
 '''
 
+# ── جوایز فعالیت ─────────────────────────────────────────────────
+REWARDS_BLOCK = r'''
+// ───────────────────────── جوایز فعالیت ─────────────────────────
+
+/** جوایز پیش‌فرض هر فعالیت. مقدار هر کدام از پنل مدیریت قابل تغییر است. */
+const REWARD_DEFAULTS = { signup: 5, join: 10, referral: 10, mission: 3 };
+
+/** هر فعالیت چه نوع رویدادی در دفتر می‌سازد. */
+const REWARD_EVENT = { signup: 'signup', join: 'join',
+                       referral: 'referral', mission: 'mission' };
+
+/**
+ * جوایز همه فعالیت‌ها.
+ * اولویت: تنظیمات ذخیره‌شده > کلیدهای قدیمی (signupReward/referralReward)
+ * > پیش‌فرض. پس از مهاجرت، مقدار از همین‌جا خوانده می‌شود.
+ */
+function getRewards() {
+  const s = loadStore();
+  const out = {};
+  const cfg = s.settings || {};
+  for (const [k, legacy] of [['signup', 'signupReward'],
+                             ['referral', 'referralReward']]) {
+    if (cfg[legacy] !== undefined) out[k] = Number(cfg[legacy]) || 0;
+  }
+  return Object.assign({}, REWARD_DEFAULTS, out, s.rewards || {});
+}
+
+function setReward(key, coins) {
+  key = String(key);
+  const cur = getRewards();
+  if (!(key in cur)) throw new Error('کلید جایزه ناشناخته: ' + key);
+  const s = loadStore();
+  s.rewards = s.rewards || {};
+  s.rewards[key] = Math.max(0, Math.round(Number(coins)));
+  saveStore(s);
+  return getRewards()[key];
+}
+
+/** افزودن فعالیت جایزه‌دار سفارشی (مثلاً بازدید روزانه). */
+function addRewardAction(key, coins) {
+  key = String(key);
+  if (!/^[a-z0-9_]{2,20}$/.test(key)) throw new Error('کلید جایزه نامعتبر');
+  const s = loadStore();
+  s.rewards = s.rewards || {};
+  s.rewards[key] = Math.max(0, Math.round(Number(coins)) || 0);
+  saveStore(s);
+  return getRewards()[key];
+}
+
+/** حذف فعالیت سفارشی. پیش‌فرض‌ها حذف نمی‌شوند. */
+function removeRewardAction(key) {
+  const s = loadStore();
+  if (!s.rewards || !(key in s.rewards)) return false;
+  if (key in REWARD_DEFAULTS) return false;
+  delete s.rewards[key];
+  saveStore(s);
+  return true;
+}
+
+/**
+ * دادن جایزه یک فعالیت به کاربر. هر فعالیت برای هر کاربر فقط یک بار.
+ * نوع رویداد بر اساس فعالیت: signup/join/referral/mission.
+ */
+function grantReward(uid, key) {
+  key = String(key);
+  const coins = Number(getRewards()[key]);
+  if (!coins || coins <= 0) {
+    return { ok: false, reason: 'جایزه این فعالیت صفر یا تعریف‌نشده است' };
+  }
+  const claimKey = 'r:' + String(uid) + ':' + key;
+  const s = loadStore();
+  s.claimed = s.claimed || {};
+  if (s.claimed[claimKey]) return { ok: false, reason: 'قبلاً دریافت شده' };
+
+  const type = REWARD_EVENT[key] || 'mission';
+  const res = addEvent(uid, type, coins, { action: key });
+  if (!res.ok) return res;
+
+  const s2 = loadStore();
+  s2.claimed = s2.claimed || {};
+  s2.claimed[claimKey] = Date.now();
+  saveStore(s2);
+  return res;
+}
+'''
+
+REWARDS_CLI_BLOCK = r'''    case 'rewards':
+      return out(getRewards());
+    case 'reward':
+      return out({ key: a, coins: b === undefined ? getRewards()[a]
+                                                  : setReward(a, Number(b)) });
+    case 'reward-add':
+      return out({ key: a, coins: addRewardAction(a, Number(b)) });
+    case 'reward-del':
+      return out({ removed: removeRewardAction(a) });
+'''
+
+REWARDS_TESTS_BLOCK = r'''    'const rw0=m.getRewards();',
+    'a(rw0.signup===5 && rw0.join===10 && rw0.mission===3,"جوایز پیش‌فرض درست است");',
+    'm.setReward("join",0);',
+    'a(!m.grantReward("u1","join").ok,"جایزه صفر رد شد");',
+    'm.setReward("join",10);',
+    'a(m.grantReward("u1","join").ok,"جایزه جوین داده شد");',
+    'a(!m.grantReward("u1","join").ok,"جایزه جوین فقط یک بار است");',
+    'm.addRewardAction("daily",7);',
+    'a(m.getRewards().daily===7,"فعالیت سفارشی اضافه شد");',
+    'a(m.removeRewardAction("daily")===true,"فعالیت سفارشی حذف شد");',
+    'a(m.removeRewardAction("join")===false,"پیش‌فرض حذف نمی‌شود");',
+'''
+
 # ── فهرست همه قیمت‌های ثبت‌شده ────────────────────────────────────
 PRICES_BLOCK = r'''
 
@@ -201,6 +311,7 @@ TESTS_BLOCK = r'''    'm.setProduct({id:"x1",label:"سی گیگ",planId:"44trir5
 EXPORTS_BLOCK = r'''  getCoinPrices,
   listProducts, getProduct, setProduct, removeProduct,
   topHolders, recentUsers, ledgerRecent, userList,
+  getRewards, setReward, addRewardAction, removeRewardAction, grantReward,
 '''
 
 # هر قدم: نشانه (اگر باشد یعنی قبلاً اضافه شده)، لنگرگاه، کجا، متن
@@ -209,6 +320,10 @@ STEPS = [
      "marker": "shopEnabled",
      "anchor": "  dailyCap: 200,              // سقف کوین دریافتی هر کاربر در روز",
      "where": "after", "add": SHOP_BLOCK},
+    {"name": "رویداد جوین",
+     "marker": "                'join',",
+     "anchor": "const EVENTS = ['signup', 'mission', 'purchase', 'referral',",
+     "where": "after", "add": "\n                'join',"},
     {"name": "بخش محصول کوینی",
      "marker": "function listProducts(",
      "anchor": "// ───────────────────────── گزارش ─────────────────────────",
@@ -217,6 +332,18 @@ STEPS = [
      "marker": "function getCoinPrices(",
      "anchor": "  return getCoinPrice(planId);\n}",
      "where": "after", "add": PRICES_BLOCK},
+    {"name": "جوایز فعالیت",
+     "marker": "function getRewards(",
+     "anchor": "// ───────────────────────── گزارش ─────────────────────────",
+     "where": "before", "add": REWARDS_BLOCK + "\n"},
+    {"name": "دستورهای جوایز",
+     "marker": "case 'rewards':",
+     "anchor": "    case 'price':",
+     "where": "before", "add": REWARDS_CLI_BLOCK},
+    {"name": "تست‌های جوایز",
+     "marker": "جوایز پیش‌فرض درست است",
+     "anchor": "    'a(m.history(\"u1\",1)[0].type===\"spend\",\"آخرین رویداد خرج است\");',",
+     "where": "after", "add": "\n" + REWARDS_TESTS_BLOCK.rstrip("\n")},
     {"name": "ابزار مدیریت",
      "marker": "function topHolders(",
      "anchor": "// ───────────────────────── ابزار خط فرمان ─────────────────────────",

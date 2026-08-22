@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN UI — رابط کاربری کوین
- *  نسخه: 1.1.0 | 2026-08-22 | فاز ۲ + سوئیچ باز/بسته فروشگاه
+ *  نسخه: 1.2.0 | 2026-08-22 | فاز ۲ + سوئیچ فروشگاه + جوایز زنده (بدون دعوت)
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا ماژول جدا:
@@ -24,7 +24,6 @@ const T = {
   balance: '💰 موجودی من',
   shop: '🛒 فروشگاه کوینی',
   missions: '🎯 ماموریت‌ها',
-  referral: '👥 دعوت دوستان',
   history: '📜 گردش حساب',
   guide: '❓ راهنما',
   back: '⬅️ بازگشت',
@@ -38,10 +37,11 @@ const EVENT_FA = {
   signup: 'جایزه ثبت‌نام',
   mission: 'ماموریت',
   purchase: 'خرید',
-  referral: 'زیرمجموعه',
+  referral: 'دعوت دوستان',
   spend: 'خرید با کوین',
   admin: 'اصلاح ادمین',
   reset: 'صفرسازی',
+  join: 'جوین کانال',
 };
 
 function fa(n) {
@@ -86,8 +86,7 @@ function screenMenu(uid) {
       [{ text: T.balance, callback_data: 'coin:bal' },
        { text: T.history, callback_data: 'coin:hist' }],
       [{ text: T.missions, callback_data: 'coin:miss' },
-       { text: T.referral, callback_data: 'coin:ref' }],
-      [{ text: T.guide, callback_data: 'coin:help', style: 'primary' }],
+       { text: T.guide, callback_data: 'coin:help', style: 'primary' }],
       [{ text: T.home, callback_data: 'back_main' }],
     ]),
   };
@@ -101,20 +100,27 @@ function screenMenu(uid) {
  */
 function screenGuide(uid) {
   const c = coin.getSettings();
+  const rw = coin.getRewards();
   const items = coin.listProducts();
   const earn = [];
-  if (c.signupReward > 0) {
-    earn.push('• ثبت‌نام در ربات\n   <code>' + fa(c.signupReward) + '</code> کوین، یک‌بار');
+  if (rw.signup > 0) {
+    earn.push('• ثبت‌نام در ربات\n   <code>' + fa(rw.signup) + '</code> کوین، یک‌بار');
+  }
+  if (rw.join > 0) {
+    earn.push('• جوین کانال/گروه\n   <code>' + fa(rw.join) + '</code> کوین، یک‌بار');
   }
   earn.push(c.purchaseMode === 'relative'
     ? '• خرید سرویس\n   هر <code>' + fa(c.purchasePerAmount) +
       '</code> تومان، <code>1</code> کوین'
     : '• خرید سرویس\n   هر خرید <code>' + fa(c.purchaseFixed) + '</code> کوین');
-  if (c.referralReward > 0) {
+  if (rw.referral > 0) {
     earn.push('• خرید دوستان دعوت‌شده\n   هر خرید <code>' +
-              fa(c.referralReward) + '</code> کوین');
+              fa(rw.referral) + '</code> کوین');
   }
-  earn.push('• انجام ماموریت‌ها\n   جایزه هر ماموریت متفاوت است');
+  if (rw.mission > 0) {
+    earn.push('• انجام ماموریت‌ها\n   هر ماموریت <code>' +
+              fa(rw.mission) + '</code> کوین');
+  }
 
   let spend = 'هنوز محصولی تعریف نشده است.';
   if (items.length) {
@@ -132,8 +138,7 @@ function screenGuide(uid) {
     '<b>با کوین چه بگیرم</b>\n' + spend + '\n\n' +
     '<b>قوانین</b>\n' +
     '• سقف دریافت روزانه <code>' + fa(c.dailyCap) + '</code> کوین\n' +
-    '• هر ماموریت فقط یک‌بار قابل دریافت است\n' +
-    '• کوین دعوت پس از <b>خرید</b> دوست شما داده می‌شود، نه ثبت‌نام\n' +
+    '• هر فعالیت فقط یک‌بار جایزه دارد\n' +
     '• کوین قابل انتقال به کاربر دیگر یا تبدیل به پول نیست\n\n' +
     '<i>همه رویدادها در گردش حساب ثبت می‌شود.</i>';
   return { text: text, markup: kb([
@@ -180,28 +185,6 @@ function screenHistory(uid) {
     }).join('\n\n');
   }
   return { text: text, markup: kb([[{ text: T.back, callback_data: 'coin' }]]) };
-}
-
-function screenReferral(uid, botUsername) {
-  const c = coin.getSettings();
-  const led = coin.readLedger()
-    .filter(r => String(r.uid) === String(uid) && r.type === 'referral');
-  const total = led.reduce((a, r) => a + r.amount, 0);
-  const link = botUsername
-    ? 'https://t.me/' + botUsername + '?start=ref' + uid
-    : 'ref' + uid;
-  const text =
-    '<b>' + T.referral + '</b>\n' + LINE + '\n\n' +
-    'لینک زیر را برای دوستانتان بفرستید.\n' +
-    'هر بار که یکی از آن‌ها سرویس بخرد،\n' +
-    '<code>' + fa(c.referralReward) + '</code> کوین به شما می‌رسد.\n\n' +
-    '🔗 <b>لینک دعوت شما</b>\n<code>' + link + '</code>\n\n' + LINE + '\n\n' +
-    '🛒 خرید دوستان شما\n<code>' + fa(led.length) + '</code> بار\n\n' +
-    '🪙 کوین دریافتی از دعوت\n<code>' + fa(total) + '</code> کوین\n\n' +
-    '<i>کوین پس از خرید دوست شما داده می‌شود، نه پس از ثبت‌نام.</i>';
-  return { text: text, markup: kb([
-    [{ text: T.guide, callback_data: 'coin:help' }],
-    [{ text: T.back, callback_data: 'coin' }]]) };
 }
 
 // ───────────────────────── فروشگاه کوینی ─────────────────────────
@@ -355,7 +338,7 @@ async function route(ctx) {
   if (d === 'coin') s = screenMenu(ctx.uid);
   else if (d === 'coin:bal') s = screenBalance(ctx.uid);
   else if (d === 'coin:hist') s = screenHistory(ctx.uid);
-  else if (d === 'coin:ref') s = screenReferral(ctx.uid, ctx.botUsername);
+
   else if (d === 'coin:shop') s = screenShop(ctx.uid);
   else if (d === 'coin:help') s = screenGuide(ctx.uid);
   else if (d === 'coin:miss') s = screenSoon(T.missions);
@@ -372,7 +355,7 @@ async function route(ctx) {
 const MENU_BUTTON = { text: T.title, callback_data: 'coin' };
 
 module.exports = { route, MENU_BUTTON, T, screenMenu, screenBalance,
-                   screenHistory, screenReferral, screenShop, screenConfirm,
+                   screenHistory, screenShop, screenConfirm,
                    screenGuide };
 
 // ───────────────────────── خودآزمون ─────────────────────────
@@ -384,12 +367,13 @@ if (require.main === module) {
     const a = (c, m) => { if (!c) { console.log('❌ ' + m); process.exit(1); }
                           console.log('✅ ' + m); };
     coin.addEvent('u9', 'signup', 5);
-    coin.addEvent('u9', 'referral', 10);
+    coin.addEvent('u9', 'join', 10);
     coin.addEvent('u9', 'spend', -3);
 
     const m = screenMenu('u9');
     a(m.text.includes('12'), 'موجودی در منو درست نمایش داده شد');
-    a(m.markup.inline_keyboard.length === 5, 'منو پنج ردیف دارد');
+    a(m.markup.inline_keyboard.length === 4, 'منو چهار ردیف دارد');
+    a(!JSON.stringify(m.markup).includes('coin:ref'), 'بخش دعوت حذف شد');
     a(JSON.stringify(m.markup).includes('"style":"success"'),
       'دکمه خرید سبز است');
 
@@ -398,12 +382,8 @@ if (require.main === module) {
     a(b.text.includes('3'), 'مجموع خرج‌شده ۳ است');
 
     const h = screenHistory('u9');
-    a(h.text.includes('زیرمجموعه'), 'نام رویداد فارسی شد');
+    a(h.text.includes('جوین کانال'), 'نام رویداد جوین فارسی شد');
     a(h.text.includes('+10'), 'علامت مثبت گذاشته شد');
-
-    const r = screenReferral('u9', 'FoxWboyx_bot');
-    a(r.text.includes('t.me/FoxWboyx_bot?start=refu9'), 'لینک دعوت ساخته شد');
-    a(r.text.includes('10'), 'کوین زیرمجموعه شمرده شد');
 
     const empty = screenHistory('nobody');
     a(empty.text.includes('هنوز'), 'تاریخچه خالی پیام درست دارد');
@@ -486,11 +466,13 @@ if (require.main === module) {
       cs = screenShop('u9');
       a(cs.text.includes('موجودی شما'), 'فروشگاه باز دوباره عادی شد');
 
-      // ── راهنمای زنده
-      coin.setSetting('referralReward', 17);
+      // ── راهنمای زنده (جوایز از پنل قابل تغییر)
+      coin.setReward('join', 25);
+      coin.setReward('signup', 17);
       coin.setSetting('dailyCap', 333);
       let g = screenGuide('u9');
-      a(g.text.includes('17'), 'راهنما نرخ دعوت را از تنظیمات زنده خواند');
+      a(g.text.includes('25'), 'راهنما جایزه جوین را زنده خواند');
+      a(g.text.includes('17'), 'راهنما جایزه ثبت‌نام را زنده خواند');
       a(g.text.includes('333'), 'راهنما سقف روزانه را زنده خواند');
       a(g.text.includes('سی گیگ'), 'راهنما محصولات واقعی را فهرست کرد');
       coin.setSetting('purchaseMode', 'relative');
@@ -505,7 +487,7 @@ if (require.main === module) {
       const mm = screenMenu('u9');
       a(mm.text.includes('راهنما') || JSON.stringify(mm.markup).includes('coin:help'),
         'دکمه راهنما در منو هست');
-      a(mm.markup.inline_keyboard.length === 5, 'منو پنج ردیف شد');
+      a(mm.markup.inline_keyboard.length === 4, 'منو چهار ردیف شد');
 
       let hit = null;
       await route({ data: 'coin:help', uid: 'u9', config: {}, chatId: 1, messageId: 2,
