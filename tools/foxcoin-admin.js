@@ -151,7 +151,8 @@ function screenMenu() {
     '👥 کاربران دارای موجودی\n<code>' + fa(s.holders) + '</code>\n\n' +
     '🪙 کوین در گردش\n<code>' + fa(s.circulating) + '</code>\n\n' +
     '📊 مجموع رویدادها\n<code>' + fa(s.events) + '</code>\n\n' +
-    '<i>هر تغییر با دکمه انجام می‌شود و در دفتر کل ثبت می‌شود.</i>';
+    '<i>هر تغییر با دکمه انجام می‌شود و در دفتر کل ثبت می‌شود.</i>\n\n' +
+    '<code>نسخه 1.3.0</code>';
   return {
     text: text,
     markup: kb([
