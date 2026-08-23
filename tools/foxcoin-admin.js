@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.6.0 | 2026-08-23 | فاکس شاپ + موتور جوایز + متن‌ها
+ *  نسخه: 1.7.0 | 2026-08-23 | فاکس شاپ + موتور جوایز + متن‌ها
  *  ۱.۶.۰: تشخیص نبود هوک getPlans + راه «افزودن دستی» محصول
  * ════════════════════════════════════════════════════════════════
  *
@@ -43,7 +43,7 @@ const T = {
   manualAdd: '✍️ افزودن دستی (بدون لیست پلن)',
   changePlan: '🛰 تغییر پلن',
   changeCat: '🔄 تغییر دسته',
-  prices: '💵 قیمت پلن‌ها',
+  prices: '🧮 فرمول قیمت',
   ledger: '📜 دفتر کل',
   rewards: '🎁 جوایز فعالیت',
   texts: '📝 متن‌ها',
@@ -104,6 +104,11 @@ const REASON_FA = {
 };
 
 const LINE = '➖➖➖➖➖➖➖➖➖➖';
+
+/** برچسب فارسی دسته. ربات فقط volume و unlimited دارد. */
+function catLabel(c) {
+  return coin.normCat(c) === 'unlimited' ? '♾ نامحدود' : '🧬 حجمی';
+}
 
 /**
  * چرا این پیام مهم است:
@@ -171,7 +176,9 @@ function when(ts) {
 }
 
 function kb(rows) {
-  return { inline_keyboard: rows };
+  // ردیف خالی را تلگرام رد می‌کند (Bad Request). صفحه‌هایی که
+  // دکمه‌شان شرطی است ردیف خالی می‌سازند؛ همین‌جا پاک می‌شود.
+  return { inline_keyboard: (rows || []).filter(r => r && r.length) };
 }
 
 function esc(s) {
@@ -213,7 +220,7 @@ function screenMenu() {
     '🪙 کوین در گردش\n<code>' + fa(s.circulating) + '</code>\n\n' +
     '📊 مجموع رویدادها\n<code>' + fa(s.events) + '</code>\n\n' +
     '<i>هر تغییر با دکمه انجام می‌شود و در دفتر کل ثبت می‌شود.</i>\n\n' +
-    '<code>نسخه 1.6.0</code>';
+    '<code>نسخه 1.7.0</code>';
   return {
     text: text,
     markup: kb([
@@ -221,7 +228,7 @@ function screenMenu() {
        { text: T.settings, callback_data: 'admin:settings' }],
       [{ text: T.products, callback_data: 'admin:products' },
        { text: T.users, callback_data: 'admin:users' }],
-      [{ text: T.prices, callback_data: 'admin:prices' },
+      [{ text: T.prices, callback_data: 'admin:pricing' },
        { text: T.ledger, callback_data: 'admin:ledger' }],
       [{ text: T.texts, callback_data: 'admin:texts' },
        { text: T.help, callback_data: 'admin:help', style: 'primary' }],
@@ -739,7 +746,7 @@ function screenProductEdit(id) {
   if (!p) return screenProducts();
   const text =
     '<b>🛍 ' + p.label + '</b>\n' + LINE + '\n\n' +
-    'دسته: ' + (p.cat === 'days' ? '🗓 زمانی' : '📦 حجمی') + '\n' +
+    'دسته: ' + catLabel(p.cat) + '\n' +
     '🛰 پلن <code>' + p.planId + '</code>\n' +
     '💾 حجم <code>' + fa(p.gb) + '</code> گیگ\n' +
     '⏱ مدت <code>' + fa(p.days) + '</code> روز\n' +
@@ -752,7 +759,7 @@ function screenProductEdit(id) {
     [{ text: '💎 قیمت کوینی', callback_data: 'admin:pcoins:' + p.id }],
     [{ text: T.autoName, callback_data: 'admin:plabel:' + p.id },
      { text: T.changePlan, callback_data: 'admin:pplan:' + p.id }],
-    [{ text: T.changeCat + ' (' + (p.cat === 'days' ? '🗓 زمانی' : '📦 حجمی') + ')',
+    [{ text: T.changeCat + ' (' + catLabel(p.cat) + ')',
       callback_data: 'admin:pcat:' + p.id }],
     [{ text: p.active === false ? '▶️ فعال‌سازی' : '⏸ غیرفعال',
       callback_data: 'admin:ptoggle:' + p.id },
@@ -783,7 +790,7 @@ async function screenPickProductPlan(ctx, id) {
   if (!p) return screenProducts();
   const head = '<b>' + T.changePlan + '</b>\n' + LINE + '\n\n' +
                '📦 ' + p.label + '\n' +
-               'دسته: ' + (p.cat === 'days' ? '🗓 زمانی' : '📦 حجمی') + '\n\n';
+               'دسته: ' + catLabel(p.cat) + '\n\n';
   if (typeof ctx.getPlans !== 'function') {
     return { text: head + NO_PLANS_HINT,
              markup: kb([[{ text: T.back, callback_data: 'admin:pedit:' + id }]]) };
@@ -813,7 +820,7 @@ function doChangePlan(id, planId) {
 async function doToggleCat(ctx, id) {
   const p = coin.getProduct(id);
   if (!p) return screenProducts();
-  const cat = p.cat === 'days' ? 'volume' : 'days';
+  const cat = coin.normCat(p.cat) === 'unlimited' ? 'volume' : 'unlimited';
   coin.setProduct(Object.assign({}, p, { cat: cat }));
   return screenPickProductPlan(ctx, id);
 }
@@ -870,7 +877,7 @@ function addState(cat, planId, gb, days, coins) {
 
 function parseAddState(s) {
   const parts = String(s).split(':');
-  return { cat: parts[0] || 'volume', planId: parts[1] || '',
+  return { cat: coin.normCat(parts[0]), planId: parts[1] || '',
            gb: Number(parts[2]) || 0, days: Number(parts[3]) || 0,
            coins: Number(parts[4]) || 0 };
 }
@@ -881,7 +888,7 @@ function parseAddState(s) {
  * می‌کنیم تا هوک bot.js موجود (patch-foxcoin-texts.py) کافی باشد.
  */
 function screenManualPlan(uid, cat) {
-  cat = (cat === 'days') ? 'days' : 'volume';
+  cat = coin.normCat(cat);
   pendingEdits.set(String(uid), {
     kind: 'plan', cat: cat, at: Date.now(),
     prompt: '🛰 شناسه پلن را بفرست (مثلاً <code>44trir5v</code>).\n' +
@@ -889,7 +896,7 @@ function screenManualPlan(uid, cat) {
   });
   return {
     text: '<b>' + T.manualAdd + '</b>\n' + LINE + '\n\n' +
-          'دسته: ' + (cat === 'days' ? '🗓 زمانی' : '📦 حجمی') + '\n\n' +
+          'دسته: ' + catLabel(cat) + '\n\n' +
           '<b>شناسه پلن را همین‌جا بفرست.</b>\n\n' +
           '<i>بعد از آن، حجم و مدت و قیمت را با دکمه تنظیم می‌کنی.\n' +
           'اگر پیام «شناسه را بفرست» نیامد، از خط فرمان:\n' +
@@ -905,15 +912,15 @@ function screenPickCat() {
     '<i>اول دسته را انتخاب کنید.\n' +
     'محصول به یک پلن موجود در همان دسته وصل می‌شود.</i>';
   return { text: text, markup: kb([
-    [{ text: '📦 حجمی (volume)', callback_data: 'admin:paddcat:volume' }],
-    [{ text: '🗓 زمانی (days)', callback_data: 'admin:paddcat:days' }],
+    [{ text: '♾ نامحدود', callback_data: 'admin:paddcat:unlimited' }],
+    [{ text: '🧬 حجمی', callback_data: 'admin:paddcat:volume' }],
     [{ text: T.back, callback_data: 'admin:products' }],
   ]) };
 }
 
 async function screenPickPlan(ctx, cat) {
   const head = '<b>' + T.addProduct + '</b>\n' + LINE + '\n\n' +
-               'دسته: ' + (cat === 'days' ? '🗓 زمانی' : '📦 حجمی') + '\n\n';
+               'دسته: ' + catLabel(cat) + '\n\n';
   if (typeof ctx.getPlans !== 'function') {
     return { text: head + NO_PLANS_HINT,
              markup: kb([
@@ -939,7 +946,7 @@ async function screenPickPlan(ctx, cat) {
 
 function screenAddGb(st) {
   const s = parseAddState(st);
-  const cur = s.gb || (s.cat === 'days' ? 0 : 30);
+  const cur = s.gb || 30;
   const text =
     '<b>' + T.addProduct + ' — حجم</b>\n' + LINE + '\n\n' +
     '🛰 پلن <code>' + s.planId + '</code>\n\n' +
@@ -959,10 +966,13 @@ function screenAddGb(st) {
 function screenAddDays(st) {
   const s = parseAddState(st);
   const cur = s.days || 30;
+  const unlim = coin.normCat(s.cat) === 'unlimited';
   const text =
     '<b>' + T.addProduct + ' — مدت</b>\n' + LINE + '\n\n' +
-    '🛰 پلن <code>' + s.planId + '</code>\n\n' +
-    'مدت: <code>' + fa(cur) + '</code> روز\n\n' +
+    'دسته: ' + catLabel(s.cat) + '\n' +
+    '🛰 پلن <code>' + s.planId + '</code>\n' +
+    (unlim ? '♾ بدون محدودیت حجم\n' : '💾 ' + fa(s.gb) + ' گیگ\n') +
+    '\nمدت: <code>' + fa(cur) + '</code> روز\n\n' +
     '<i>اعمال فوری.</i>';
   return { text: text, markup: kb([
     [{ text: '➖10', callback_data: 'admin:padddays:' + addState(s.cat, s.planId, s.gb, Math.max(0, cur - 10), s.coins) },
@@ -977,15 +987,20 @@ function screenAddDays(st) {
 
 function screenAddCoins(st) {
   const s = parseAddState(st);
-  const cur = s.coins || 100;
+  const sug = coin.priceFor({ cat: s.cat, gb: s.gb, days: s.days });
+  const cur = s.coins || sug || 100;
   const text =
     '<b>' + T.addProduct + ' — قیمت و ثبت</b>\n' + LINE + '\n\n' +
-    'دسته: ' + (s.cat === 'days' ? '🗓 زمانی' : '📦 حجمی') + '\n' +
+    'دسته: ' + catLabel(s.cat) + '\n' +
     '🛰 پلن <code>' + s.planId + '</code>\n' +
-    '💾 حجم <code>' + fa(s.gb || 0) + '</code> گیگ\n' +
+    (coin.normCat(s.cat) === 'unlimited'
+      ? '♾ حجم: بدون محدودیت\n'
+      : '💾 حجم <code>' + fa(s.gb || 0) + '</code> گیگ\n') +
     '⏱ مدت <code>' + fa(s.days || 0) + '</code> روز\n\n' +
-    '💎 قیمت: <code>' + fa(cur) + '</code> کوین\n\n' +
-    '<i>اعمال فوری.</i>';
+    '💎 قیمت: <code>' + fa(cur) + '</code> کوین\n' +
+    (sug !== null && sug !== cur
+      ? '<i>پیشنهاد فرمول: ' + fa(sug) + ' کوین</i>\n' : '') +
+    '\n<i>اعمال فوری.</i>';
   return { text: text, markup: kb([
     [{ text: '➖100', callback_data: 'admin:paddcoins:' + addState(s.cat, s.planId, s.gb, s.days, Math.max(0, cur - 100)) },
      { text: '➖10', callback_data: 'admin:paddcoins:' + addState(s.cat, s.planId, s.gb, s.days, Math.max(0, cur - 10)) },
@@ -993,6 +1008,10 @@ function screenAddCoins(st) {
     [{ text: '➕1', callback_data: 'admin:paddcoins:' + addState(s.cat, s.planId, s.gb, s.days, cur + 1) },
      { text: '➕10', callback_data: 'admin:paddcoins:' + addState(s.cat, s.planId, s.gb, s.days, cur + 10) },
      { text: '➕100', callback_data: 'admin:paddcoins:' + addState(s.cat, s.planId, s.gb, s.days, cur + 100) }],
+    (sug !== null && sug !== cur
+      ? [{ text: '🧮 استفاده از فرمول (' + fa(sug) + ')',
+           callback_data: 'admin:paddcoins:' + addState(s.cat, s.planId, s.gb, s.days, sug) }]
+      : []),
     [{ text: '✅ ثبت محصول', callback_data: 'admin:paddgo:' + addState(s.cat, s.planId, s.gb, s.days, cur),
        style: 'success' }],
     [{ text: T.back, callback_data: 'admin:padd' }],
@@ -1380,64 +1399,145 @@ function doRevoke(uid, amount, reason) {
 
 // ───────────────────────── قیمت پلن‌ها ─────────────────────────
 
-function screenPrices() {
-  const prices = coin.getCoinPrices();
-  let text = '<b>' + T.prices + '</b>\n' + LINE + '\n\n';
-  const rows = [];
-  const plans = Object.keys(prices);
-  if (!plans.length) {
-    text += '📭 هنوز قیمت کوینی برای پلنی ثبت نشده است.\n\n' +
-            '<i>افزودن از خط فرمان:\n' +
-            'node foxcoin.js price <شناسه پلن> <کوین>\n' +
-            'یا از «قیمت پلن‌ها» در منو، قیمتی ثبت کنید.</i>';
+/**
+ * ── فرمول قیمت ─────────────────────────────────────────────
+ * منوی قدیمی «قیمت پلن‌ها» (coinPrices) روی خرید هیچ اثری نداشت —
+ * خرید همیشه از product.coins می‌خواند. آن منو حذف شد و جایش این
+ * صفحه آمد که واقعاً قیمت محصولات را می‌سازد.
+ */
+function screenPricing() {
+  const all = coin.getAllPricing();
+  const pend = coin.applyPricing({ apply: false });
+  let text = '<b>' + T.prices + '</b>\n' + LINE + '\n\n' +
+             '<i>قیمت هر محصول از روی دسته‌اش حساب می‌شود.</i>\n\n';
+  for (const c of coin.CATS) {
+    const f = all[c];
+    text += '<b>' + catLabel(c) + '</b>\n' +
+            (f.enabled ? '' : '⛔️ خاموش\n') +
+            (c === 'volume'
+              ? '• هر گیگ <code>' + fa(f.perGb) + '</code> کوین\n' : '') +
+            '• هر روز <code>' + fa(f.perDay) + '</code> کوین\n' +
+            '• پایه <code>' + fa(f.base) + '</code> کوین\n\n';
+  }
+  if (pend.length) {
+    text += '⚠️ <b>' + fa(pend.length) + '</b> محصول با فرمول فعلی ' +
+            'قیمت متفاوتی می‌گیرد.';
   } else {
-    text += '<i>' + fa(plans.length) + ' پلن دارای قیمت کوینی</i>\n';
-    for (const pl of plans) {
-      rows.push([
-        { text: '🛰 <code>' + pl + '</code> — ' + fa(prices[pl]) + ' کوین',
-          callback_data: 'admin:price:' + pl },
-        { text: '🗑', callback_data: 'admin:pricedel:' + pl },
-      ]);
-    }
+    text += '✅ قیمت همه محصولات با فرمول هماهنگ است.';
+  }
+  const rows = [];
+  for (const c of coin.CATS) {
+    rows.push([{ text: '⚙️ ' + catLabel(c), callback_data: 'admin:pcf:' + c }]);
+  }
+  if (pend.length) {
+    rows.push([{ text: '👁 پیش‌نمایش', callback_data: 'admin:pcprev' }]);
+    rows.push([{ text: '✅ اعمال روی ' + fa(pend.length) + ' محصول',
+                 callback_data: 'admin:pcapply', style: 'success' }]);
   }
   rows.push([{ text: T.back, callback_data: 'admin' }]);
   return { text: text, markup: kb(rows) };
 }
 
-function screenPrice(plan) {
-  const cur = coin.getCoinPrice(plan);
+function deltaRow(cat, field, big) {
+  const b = big || 5;
+  return [
+    { text: '➖' + fa(b), callback_data: 'admin:pcv:' + cat + ':' + field + ':-' + b },
+    { text: '➖1', callback_data: 'admin:pcv:' + cat + ':' + field + ':-1' },
+    { text: '➕1', callback_data: 'admin:pcv:' + cat + ':' + field + ':1' },
+    { text: '➕' + fa(b), callback_data: 'admin:pcv:' + cat + ':' + field + ':' + b },
+  ];
+}
+
+function exampleFor(c) {
+  if (coin.normCat(c) === 'unlimited') {
+    return 'نامحدود ۳۰ روزه = ' +
+           fa(coin.priceFor({ cat: 'unlimited', gb: 0, days: 30 })) + ' کوین';
+  }
+  return '۳۰ گیگ ۳۰ روزه = ' +
+         fa(coin.priceFor({ cat: 'volume', gb: 30, days: 30 })) + ' کوین';
+}
+
+/** تنظیم فرمول یک دسته با دکمه‌های +/−. */
+function screenPricingCat(cat) {
+  const c = coin.normCat(cat);
+  const f = coin.getPricing(c);
+  const isVol = c === 'volume';
   const text =
-    '<b>💵 قیمت پلن</b>\n' + LINE + '\n\n' +
-    '🛰 پلن <code>' + plan + '</code>\n\n' +
-    'قیمت کوینی فعلی\n' +
-    (cur === null ? '<i>تعریف نشده</i>' : '<code>' + fa(cur) + '</code> کوین') +
-    '\n\n<i>هر دکمه همان لحظه اعمال می‌شود.\n' +
-    'رسیدن به صفر یعنی حذف قیمت (فروش کوینی غیرفعال).</i>';
-  return { text: text, markup: kb([
-    [{ text: '➖100', callback_data: 'admin:pricev:' + plan + ':-100' },
-     { text: '➖10', callback_data: 'admin:pricev:' + plan + ':-10' },
-     { text: '➖1', callback_data: 'admin:pricev:' + plan + ':-1' }],
-    [{ text: '➕1', callback_data: 'admin:pricev:' + plan + ':1' },
-     { text: '➕10', callback_data: 'admin:pricev:' + plan + ':10' },
-     { text: '➕100', callback_data: 'admin:pricev:' + plan + ':100' }],
-    [{ text: '🗑 حذف قیمت', callback_data: 'admin:pricedel:' + plan }],
-    [{ text: T.back, callback_data: 'admin:prices' }],
-  ]) };
+    '<b>⚙️ فرمول ' + catLabel(c) + '</b>\n' + LINE + '\n\n' +
+    'قیمت = ' + (isVol ? 'هر گیگ × گیگ + ' : '') + 'هر روز × روز + پایه\n\n' +
+    (isVol ? '📦 هر گیگ <code>' + fa(f.perGb) + '</code> کوین\n' : '') +
+    '📅 هر روز <code>' + fa(f.perDay) + '</code> کوین\n' +
+    '➕ پایه <code>' + fa(f.base) + '</code> کوین\n' +
+    '🔄 گِرد به <code>' + fa(f.round) + '</code>\n\n' +
+    'وضعیت: ' + (f.enabled ? '✅ روشن' : '⛔️ خاموش') + '\n\n' +
+    '<i>مثال: ' + exampleFor(c) + '</i>';
+  const rows = [];
+  if (isVol) {
+    rows.push([{ text: '📦 هر گیگ', callback_data: 'admin:ignore' }]);
+    rows.push(deltaRow(c, 'perGb'));
+  }
+  rows.push([{ text: '📅 هر روز', callback_data: 'admin:ignore' }]);
+  rows.push(deltaRow(c, 'perDay'));
+  rows.push([{ text: '➕ پایه', callback_data: 'admin:ignore' }]);
+  rows.push(deltaRow(c, 'base', 10));
+  rows.push([
+    { text: f.enabled ? '⛔️ خاموش' : '✅ روشن', callback_data: 'admin:pctog:' + c },
+    { text: '↩️ پیش‌فرض', callback_data: 'admin:pcreset:' + c },
+  ]);
+  rows.push([{ text: T.back, callback_data: 'admin:pricing' }]);
+  return { text: text, markup: kb(rows) };
 }
 
-function applyPrice(plan, delta) {
-  const cur = coin.getCoinPrice(plan);
-  const base = cur === null ? 0 : cur;
-  const next = base + Number(delta);
-  if (next <= 0) coin.setCoinPrice(plan, null);
-  else coin.setCoinPrice(plan, next);
-  return screenPrice(plan);
+function applyPricingField(cat, field, delta) {
+  const c = coin.normCat(cat);
+  const f = coin.getPricing(c);
+  const patch = {};
+  patch[field] = Math.max(0, Number(f[field] || 0) + Number(delta));
+  coin.setPricing(c, patch);
+  return screenPricingCat(c);
 }
 
-function removePrice(plan) {
-  coin.setCoinPrice(plan, null);
-  return screenPrices();
+function togglePricing(cat) {
+  const c = coin.normCat(cat);
+  coin.setPricing(c, { enabled: !coin.getPricing(c).enabled });
+  return screenPricingCat(c);
 }
+
+function resetPricingCat(cat) {
+  coin.resetPricing(cat);
+  return screenPricingCat(cat);
+}
+
+function screenPricingPreview() {
+  const ch = coin.applyPricing({ apply: false });
+  let text = '<b>👁 پیش‌نمایش تغییر قیمت</b>\n' + LINE + '\n\n';
+  if (!ch.length) {
+    text += '✅ چیزی برای تغییر نیست.';
+  } else {
+    for (const c of ch.slice(0, 25)) {
+      text += '• ' + c.label + '\n   <code>' + fa(c.from) + '</code> → <code>' +
+              fa(c.to) + '</code> کوین\n';
+    }
+    if (ch.length > 25) text += '\n<i>و ' + fa(ch.length - 25) + ' مورد دیگر…</i>';
+    text += '\n<i>محصولات با قیمت دستی دست‌نخورده می‌مانند.</i>';
+  }
+  const rows = [];
+  if (ch.length) rows.push([{ text: '✅ اعمال', callback_data: 'admin:pcapply', style: 'success' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:pricing' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+function doApplyPricing() {
+  const ch = coin.applyPricing({ apply: true });
+  return {
+    text: '<b>✅ اعمال شد</b>\n' + LINE + '\n\n' +
+          'قیمت <code>' + fa(ch.length) + '</code> محصول به‌روز شد.\n\n' +
+          '<i>محصولات با قیمت دستی تغییر نکردند.</i>',
+    markup: kb([[{ text: '🧮 فرمول قیمت', callback_data: 'admin:pricing' }],
+                [{ text: '🛍 فاکس شاپ', callback_data: 'admin:products' }]]),
+  };
+}
+
 
 // ───────────────────────── دفتر کل ─────────────────────────
 
@@ -1514,7 +1614,8 @@ const P = {
   grant: 'admin:grant:', grantv: 'admin:grantv:', grantgo: 'admin:grantgo:',
   revoke: 'admin:revoke:', revokev: 'admin:revokev:',
   revokego: 'admin:revokego:',
-  price: 'admin:price:', pricev: 'admin:pricev:', pricedel: 'admin:pricedel:',
+  pcf: 'admin:pcf:', pcv: 'admin:pcv:',
+  pctog: 'admin:pctog:', pcreset: 'admin:pcreset:',
 };
 
 function after(d, prefix) {
@@ -1545,7 +1646,12 @@ async function route(ctx) {
   else if (d === 'admin:padd') s = screenPickCat();
   else if (d.startsWith('admin:paddman:')) s = screenManualPlan(ctx.uid, after(d, 'admin:paddman:'));
   else if (d.startsWith(P.paddcat)) s = await screenPickPlan(ctx, after(d, P.paddcat));
-  else if (d.startsWith(P.paddplan)) s = screenAddGb(after(d, P.paddplan));
+  else if (d.startsWith(P.paddplan)) {
+    // نامحدود حجم ندارد: مرحله حجم رد می‌شود
+    const st = after(d, P.paddplan);
+    s = coin.normCat(parseAddState(st).cat) === 'unlimited'
+      ? screenAddDays(st) : screenAddGb(st);
+  }
   else if (d.startsWith(P.paddgb)) s = screenAddDays(after(d, P.paddgb));
   else if (d.startsWith(P.padddays)) s = screenAddCoins(after(d, P.padddays));
   else if (d.startsWith(P.paddcoins)) s = screenAddCoins(after(d, P.paddcoins));
@@ -1599,7 +1705,17 @@ async function route(ctx) {
   else if (d === 'admin:tcancel') {
     clearPending(ctx.uid);
     s = screenTexts();
-  } else if (d === 'admin:prices') s = screenPrices();
+  } else if (d === 'admin:pricing') s = screenPricing();
+  else if (d === 'admin:pcprev') s = screenPricingPreview();
+  else if (d === 'admin:pcapply') s = doApplyPricing();
+  else if (d === 'admin:ignore') s = null;
+  else if (d.startsWith(P.pcf)) s = screenPricingCat(after(d, P.pcf));
+  else if (d.startsWith(P.pctog)) s = togglePricing(after(d, P.pctog));
+  else if (d.startsWith(P.pcreset)) s = resetPricingCat(after(d, P.pcreset));
+  else if (d.startsWith(P.pcv)) {
+    const [pc, pf, pv] = after(d, P.pcv).split(':');
+    s = applyPricingField(pc, pf, pv);
+  }
   else if (d === 'admin:ledger') s = screenLedger();
   else if (d === 'admin:help') s = screenHelp();
   else if (d.startsWith(P.set)) s = screenSetting(after(d, P.set));
@@ -1641,17 +1757,13 @@ async function route(ctx) {
   } else if (d.startsWith(P.revokego)) {
     const [u, amt, r] = after(d, P.revokego).split(':');
     s = doRevoke(u, amt, r);
-  } else if (d.startsWith(P.price)) {
-    s = screenPrice(after(d, P.price));
-  } else if (d.startsWith(P.pricev)) {
-    const [pl, v] = after(d, P.pricev).split(':');
-    s = applyPrice(pl, v);
-  } else if (d.startsWith(P.pricedel)) {
-    s = removePrice(after(d, P.pricedel));
   } else {
     // مسیر ناشناخته در محدوده admin: منوی مدیریت
     s = screenMenu();
   }
+
+  // برچسب تزئینی (admin:ignore) صفحه ندارد: پیام دست‌نخورده بماند
+  if (!s) return true;
 
   await ctx.editTelegram(ctx.config, ctx.chatId, ctx.messageId, s.text, s.markup);
   return true;
@@ -1672,7 +1784,7 @@ function adminMenuRows(opts) {
 module.exports = { route, routeText, pendingText, clearPending,
                    isAdmin, adminMenuRows, T,
                    screenMenu, screenStats, screenSettings, screenProducts,
-                   screenUsers, screenAllUsers, screenPrices, screenLedger,
+                   screenUsers, screenAllUsers, screenPricing, screenLedger,
                    screenRewards, screenTexts, screenHelp, doGrant, doRevoke,
                    doSetBal };
 
@@ -1805,18 +1917,54 @@ if (require.main === module) {
       await go('admin:pplanpick:' + np.id + ':PL2');
       a(coin.getProduct(np.id).planId === 'PL2', 'پلن محصول عوض شد');
       await go('admin:pcat:' + np.id, null, { getPlans: getPlans2 });
-      a(coin.getProduct(np.id).cat === 'days', 'دسته محصول عوض شد');
+      a(coin.getProduct(np.id).cat === 'unlimited', 'دسته به نامحدود عوض شد');
+      a(coin.getProduct(np.id).gb === 0, 'نامحدود حجم ندارد');
       await go('admin:pcat:' + np.id, null, { getPlans: getPlans2 });
       a(coin.getProduct(np.id).cat === 'volume', 'دسته محصول برگشت');
 
-      // ── قیمت پلن‌ها
-      await go('admin:pricev:PL9:50');
-      a(coin.getCoinPrice('PL9') === 50, 'قیمت پلن تنظیم شد');
-      await go('admin:pricev:PL9:-50');
-      a(coin.getCoinPrice('PL9') === null, 'رسیدن به صفر یعنی حذف قیمت');
-      await go('admin:pricev:PL9:30');
-      await go('admin:pricedel:PL9');
-      a(coin.getCoinPrice('PL9') === null, 'حذف قیمت پلن کار کرد');
+      // ── فرمول قیمت (جایگزین منوی مرده «قیمت پلن‌ها»)
+      await go('admin:pricing');
+      a(sent.text.includes('فرمول'), 'صفحه فرمول قیمت باز شد');
+      a(JSON.stringify(sent.markup).includes('نامحدود'),
+        'هر دو دسته در فرمول هستند');
+
+      await go('admin:pcf:volume');
+      a(sent.text.includes('هر گیگ'), 'فرمول حجمی: هر گیگ دارد');
+      const gb0 = coin.getPricing('volume').perGb;
+      await go('admin:pcv:volume:perGb:1');
+      a(coin.getPricing('volume').perGb === gb0 + 1, 'هر گیگ زیاد شد');
+      await go('admin:pcv:volume:perGb:-1');
+      a(coin.getPricing('volume').perGb === gb0, 'هر گیگ کم شد');
+
+      await go('admin:pcf:unlimited');
+      a(!sent.text.includes('هر گیگ'), 'فرمول نامحدود «هر گیگ» ندارد');
+      a(sent.text.includes('هر روز'), 'فرمول نامحدود «هر روز» دارد');
+
+      await go('admin:pctog:volume');
+      a(coin.getPricing('volume').enabled === false, 'فرمول خاموش شد');
+      await go('admin:pctog:volume');
+      a(coin.getPricing('volume').enabled === true, 'فرمول روشن شد');
+      await go('admin:pcreset:volume');
+      a(coin.getPricing('volume').perGb === coin.PRICING_DEFAULTS.volume.perGb,
+        'بازگشت به پیش‌فرض');
+
+      // اعمال دسته‌جمعی + احترام به قیمت دستی
+      coin.setProduct({ id: 'PF1', label: 'ف', planId: 'PL1',
+                        cat: 'volume', gb: 10, days: 30, coins: 1 });
+      coin.setManualPrice('PF1', 999);
+      coin.setProduct({ id: 'PF2', label: 'ف۲', planId: 'PL1',
+                        cat: 'unlimited', gb: 0, days: 30, coins: 1 });
+      await go('admin:pcprev');
+      a(sent.text.includes('پیش‌نمایش'), 'پیش‌نمایش باز شد');
+      await go('admin:pcapply');
+      a(coin.getProduct('PF1').coins === 999, 'قیمت دستی محفوظ ماند');
+      a(coin.getProduct('PF2').coins === coin.priceFor(coin.getProduct('PF2')),
+        'قیمت فرمولی اعمال شد');
+
+      // برچسب تزئینی نباید صفحه عوض کند
+      const beforeIgnore = sent.text;
+      await go('admin:ignore');
+      a(sent.text === beforeIgnore, 'دکمه تزئینی صفحه را عوض نکرد');
 
       // ── کاربران و افزودن/کسر کوین
       await go('admin:users');

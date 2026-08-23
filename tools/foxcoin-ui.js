@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN UI — رابط کاربری کوین
- *  نسخه: 1.4.1 | 2026-08-23 | فروشگاه + جوایز + روزانه + متن‌ها
+ *  نسخه: 1.5.0 | 2026-08-23 | فروشگاه + جوایز + روزانه + متن‌ها
  *  ۱.۴.۱: محافظ هوک سرویس‌سازی — خرید به‌جای TypeError پیام روشن می‌دهد
  * ════════════════════════════════════════════════════════════════
  *
@@ -82,7 +82,7 @@ function screenMenu(uid) {
             '</code> کوین دیگر لازم دارید.\n\n')
       : '') +
     txt.menu_note + '\n\n' +
-    '<code>نسخه 1.4.1</code>';
+    '<code>نسخه 1.5.0</code>';
   return {
     text: text,
     markup: kb([
@@ -268,11 +268,29 @@ function screenShop(uid) {
             'کوین‌هایتان محفوظ است، به‌زودی سر بزنید.';
     return { text: text, markup: kb([[{ text: T.back, callback_data: 'coin' }]]) };
   }
-  const rows = items.map(p => {
-    const afford = bal >= p.coins;
-    return [{ text: (afford ? '' : '🔒 ') + p.label + '  —  ' + fa(p.coins) + ' کوین',
-              callback_data: afford ? ('coin:buy:' + p.id) : 'coin:poor:' + p.id }];
-  });
+  // گروه‌بندی بر اساس دسته تا نامحدودها و حجمی‌ها قاطی نشوند
+  const rows = [];
+  const groups = [
+    ['unlimited', '♾ نامحدود'],
+    ['volume', '🧬 حجمی'],
+  ];
+  for (const [cat, title] of groups) {
+    const list = items.filter(p => coin.normCat(p.cat) === cat);
+    if (!list.length) continue;
+    rows.push([{ text: '— ' + title + ' —', callback_data: 'coin:noop' }]);
+    for (const p of list) {
+      const afford = bal >= p.coins;
+      const spec = cat === 'unlimited'
+        ? (p.days ? fa(p.days) + ' روز' : '')
+        : [p.gb ? fa(p.gb) + 'G' : '', p.days ? fa(p.days) + 'روز' : '']
+            .filter(Boolean).join(' · ');
+      rows.push([{
+        text: (afford ? '' : '🔒 ') + p.label +
+              (spec ? '  (' + spec + ')' : '') +
+              '  —  ' + fa(p.coins) + ' کوین',
+        callback_data: afford ? ('coin:buy:' + p.id) : 'coin:poor:' + p.id }]);
+    }
+  }
   rows.push([{ text: T.back, callback_data: 'coin' }]);
   return { text: text, markup: kb(rows) };
 }
@@ -284,7 +302,9 @@ function screenConfirm(uid, pid) {
   const text =
     '<b>🧾 تأیید خرید</b>\n' + LINE + '\n\n' +
     '📦 محصول\n' + p.label + '\n\n' +
-    (p.gb ? 'حجم\n<code>' + fa(p.gb) + '</code> گیگابایت\n\n' : '') +
+    (coin.normCat(p.cat) === 'unlimited'
+      ? 'حجم\n♾ بدون محدودیت\n\n'
+      : (p.gb ? 'حجم\n<code>' + fa(p.gb) + '</code> گیگابایت\n\n' : '')) +
     (p.days ? 'مدت\n<code>' + fa(p.days) + '</code> روز\n\n' : '') +
     'هزینه\n<code>' + fa(p.coins) + '</code> کوین\n\n' +
     '💳 موجودی بعد از خرید\n<code>' + fa(bal - p.coins) + '</code> کوین\n\n' +
@@ -404,6 +424,7 @@ async function route(ctx) {
   const d = String(ctx.data || '');
   let s = null;
 
+  if (d === 'coin:noop') return true;
   if (d === 'coin') s = screenMenu(ctx.uid);
   else if (d === 'coin:bal') s = screenBalance(ctx.uid);
   else if (d === 'coin:hist') s = screenHistory(ctx.uid);
@@ -525,6 +546,19 @@ if (require.main === module) {
       const r4 = await doPurchase(okCtx, 'PBIG');
       a(r4.text.includes('کوین دیگر لازم'), 'موجودی ناکافی جلوی خرید را گرفت');
 
+      // ── نامحدود در فروشگاه
+      coin.setProduct({ id: 'PU', label: 'نامحدود یک‌ماهه', planId: 'PLU',
+                        cat: 'unlimited', gb: 99, days: 30, coins: 10 });
+      a(coin.getProduct('PU').gb === 0, 'نامحدود حجمش صفر ذخیره شد');
+      const su = screenShop('u9');
+      const sj = JSON.stringify(su.markup);
+      a(sj.includes('نامحدود'), 'دسته نامحدود در فروشگاه آمد');
+      a(sj.includes('حجمی'), 'دسته حجمی هم آمد');
+      a(sj.includes('coin:buy:PU'), 'محصول نامحدود قابل خرید است');
+      const cu = screenConfirm('u9', 'PU');
+      a(cu.text.includes('بدون محدودیت'), 'تأیید خرید نامحدود درست است');
+      a(!cu.text.includes('۰ گیگابایت'), 'نامحدود «۰ گیگ» نشان نمی‌دهد');
+
       // ── فروشگاه بسته
       coin.setSetting('shopEnabled', false);
       let cs = screenShop('u9');
@@ -598,13 +632,13 @@ if (require.main === module) {
       coin.resetText('earn_join');
       coin.resetText('guide_rules');
       coin.resetText('menu_note');
-      a(screenMenu('u9').text.includes('نسخه 1.4.1'), 'نسخه جدید در منو نمایش داده شد');
+      a(screenMenu('u9').text.includes('نسخه 1.5.0'), 'نسخه جدید در منو نمایش داده شد');
 
       const mm = screenMenu('u9');
       a(mm.text.includes('راهنما') || JSON.stringify(mm.markup).includes('coin:help'),
         'دکمه راهنما در منو هست');
       a(mm.markup.inline_keyboard.length === 5, 'منو پنج ردیف شد');
-      a(mm.text.includes('نسخه 1.4.1'), 'نسخه جدید در منو نمایش داده شد');
+      a(mm.text.includes('نسخه 1.5.0'), 'نسخه جدید در منو نمایش داده شد');
 
       let hit = null;
       await route({ data: 'coin:help', uid: 'u9', config: {}, chatId: 1, messageId: 2,

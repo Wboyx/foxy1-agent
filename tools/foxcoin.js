@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN — هسته اقتصاد کوین
- *  نسخه: 1.6.0 | 2026-08-22 | موتور جوایز پیشرفته (ثابت/درصدی/نسبی + سقف + زنجیره روزانه)
+ *  نسخه: 1.7.0 | 2026-08-22 | موتور جوایز پیشرفته (ثابت/درصدی/نسبی + سقف + زنجیره روزانه)
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا فایل جدا:
@@ -538,6 +538,116 @@ function getCoinPrices() {
 }
 
 /** خرج‌کردن برای یک محصول. صدور اشتراک کار ربات است، نه این ماژول. */
+/**
+ * ── فرمول قیمت ─────────────────────────────────────────────
+ * به‌جای تنظیم دستی تک‌تک محصولات، دو فرمول جدا نگه می‌داریم:
+ *   volume    : perGb × گیگ  + perDay × روز  + base
+ *   unlimited : perDay × روز + base
+ * محصول می‌تواند قیمت دستی داشته باشد (manualPrice=true) که
+ * فرمول به آن دست نمی‌زند.
+ */
+const PRICING_DEFAULTS = {
+  volume:    { base: 0, perGb: 3, perDay: 0, round: 5, enabled: true },
+  unlimited: { base: 50, perGb: 0, perDay: 2, round: 5, enabled: true },
+};
+
+function getPricing(cat) {
+  const s = loadStore();
+  const c = normCat(cat);
+  const saved = (s.pricing || {})[c] || {};
+  return Object.assign({}, PRICING_DEFAULTS[c], saved);
+}
+
+function getAllPricing() {
+  const out = {};
+  for (const c of CATS) out[c] = getPricing(c);
+  return out;
+}
+
+function setPricing(cat, patch) {
+  const c = normCat(cat);
+  const s = loadStore();
+  s.pricing = s.pricing || {};
+  const cur = Object.assign({}, PRICING_DEFAULTS[c], s.pricing[c] || {});
+  for (const k of ['base', 'perGb', 'perDay', 'round']) {
+    if (patch[k] !== undefined) cur[k] = Math.max(0, Number(patch[k]) || 0);
+  }
+  if (patch.enabled !== undefined) cur.enabled = !!patch.enabled;
+  s.pricing[c] = cur;
+  saveStore(s);
+  return getPricing(c);
+}
+
+function resetPricing(cat) {
+  const c = normCat(cat);
+  const s = loadStore();
+  if (s.pricing) delete s.pricing[c];
+  saveStore(s);
+  return getPricing(c);
+}
+
+/** قیمت پیشنهادی فرمول برای یک محصول (بدون ذخیره). */
+function priceFor(product) {
+  const c = normCat(product && product.cat);
+  const f = getPricing(c);
+  if (!f.enabled) return null;
+  const gb = c === 'unlimited' ? 0 : Math.max(0, Number(product.gb) || 0);
+  const days = Math.max(0, Number(product.days) || 0);
+  let v = Number(f.base) + gb * Number(f.perGb) + days * Number(f.perDay);
+  const r = Math.max(1, Number(f.round) || 1);
+  v = Math.ceil(v / r) * r;
+  return Math.max(0, Math.round(v));
+}
+
+/**
+ * اعمال فرمول روی محصولات. محصولاتی که قیمت دستی دارند رد
+ * می‌شوند مگر force داده شود.
+ * خروجی: گزارش تغییرها — بدون اعمال اگر apply=false باشد.
+ */
+function applyPricing(opts) {
+  opts = opts || {};
+  const only = opts.cat ? normCat(opts.cat) : null;
+  const s = loadStore();
+  const items = Object.values(s.products || {});
+  const changes = [];
+  for (const p of items) {
+    if (only && normCat(p.cat) !== only) continue;
+    if (p.manualPrice && !opts.force) continue;
+    const next = priceFor(p);
+    if (next === null || next === p.coins) continue;
+    changes.push({ id: p.id, label: p.label, from: p.coins, to: next });
+    if (opts.apply) {
+      s.products[String(p.id)].coins = next;
+      s.products[String(p.id)].manualPrice = false;
+    }
+  }
+  if (opts.apply && changes.length) saveStore(s);
+  return changes;
+}
+
+/** قیمت دستی: فرمول دیگر این محصول را عوض نمی‌کند. */
+function setManualPrice(id, coins) {
+  const s = loadStore();
+  const p = (s.products || {})[String(id)];
+  if (!p) return null;
+  p.coins = Math.max(0, Math.round(Number(coins) || 0));
+  p.manualPrice = true;
+  saveStore(s);
+  return p;
+}
+
+/** برگرداندن محصول به قیمت فرمولی. */
+function clearManualPrice(id) {
+  const s = loadStore();
+  const p = (s.products || {})[String(id)];
+  if (!p) return null;
+  p.manualPrice = false;
+  const next = priceFor(p);
+  if (next !== null) p.coins = next;
+  saveStore(s);
+  return p;
+}
+
 function spendForPlan(uid, planId) {
   const price = getCoinPrice(planId);
   if (price === null) return { ok: false, reason: 'این محصول با کوین فروخته نمی‌شود' };
@@ -565,6 +675,27 @@ function getProduct(id) {
   return (s.products || {})[String(id)] || null;
 }
 
+/**
+ * دسته‌های واقعی ربات دقیقاً دوتا هستند: volume و unlimited.
+ * نسخه‌های قبلی 'days' را به‌عنوان دسته دوم فرض می‌کردند که در
+ * ربات وجود ندارد — به همین دلیل پلن‌های نامحدود هرگز فهرست
+ * نمی‌شدند. هر مقدار ناشناخته به volume برمی‌گردد.
+ */
+const CATS = ['volume', 'unlimited'];
+
+function normCat(c) {
+  const v = String(c || '').toLowerCase();
+  if (v === 'unlimited' || v === 'unlim' || v === 'nolimit') return 'unlimited';
+  // 'days' میراث نسخه قدیمی است: در ربات دسته زمانی نداریم،
+  // نزدیک‌ترین معادلش نامحدودِ مدت‌دار است.
+  if (v === 'days' || v === 'time') return 'unlimited';
+  return 'volume';
+}
+
+function isUnlimited(p) {
+  return normCat(p && p.cat) === 'unlimited';
+}
+
 function setProduct(p) {
   if (!p || !p.id) throw new Error('محصول باید شناسه داشته باشد');
   for (const k of ['planId', 'cat', 'coins']) {
@@ -572,14 +703,16 @@ function setProduct(p) {
       throw new Error('فیلد لازم پر نشده: ' + k);
     }
   }
+  const cat = normCat(p.cat);
   const s = loadStore();
   s.products = s.products || {};
   s.products[String(p.id)] = {
     id: String(p.id),
     label: p.label || String(p.id),
     planId: String(p.planId),
-    cat: String(p.cat),
-    gb: Number(p.gb || 0),
+    cat: cat,
+    // نامحدود حجم ندارد؛ ذخیره صفر تا هیچ‌جا «۰ گیگ» چاپ نشود
+    gb: cat === 'unlimited' ? 0 : Number(p.gb || 0),
     days: Number(p.days || 0),
     coins: Math.max(0, Math.round(Number(p.coins))),
     active: p.active !== false,
@@ -692,6 +825,27 @@ function cli() {
                                                    : setCoinPrice(a, Number(b)) });
     case 'prices':
       return out(getCoinPrices());
+    case 'pricing':
+      return out(a ? getPricing(a) : getAllPricing());
+    case 'pricing-set': {
+      // node foxcoin.js pricing-set volume '{"perGb":4,"base":10}'
+      let patch = {};
+      try { patch = JSON.parse(b || '{}'); } catch (e) {
+        return out({ error: 'JSON نامعتبر' });
+      }
+      return out(setPricing(a, patch));
+    }
+    case 'pricing-reset':
+      return out(resetPricing(a));
+    case 'pricing-preview':
+      return out(applyPricing({ cat: a || null, apply: false }));
+    case 'pricing-apply':
+      return out(applyPricing({ cat: a || null, apply: true,
+                                force: b === 'force' }));
+    case 'product-manual':
+      return out(setManualPrice(a, Number(b)));
+    case 'product-auto':
+      return out(clearManualPrice(a));
     case 'rewards':
       return out(getRewards());
     case 'reward':
@@ -919,6 +1073,10 @@ module.exports = {
   getSettings, setSetting, getBalance, addEvent, coinsForPurchase,
   claimMission, getCoinPrice, setCoinPrice, getCoinPrices, spendForPlan,
   listProducts, getProduct, setProduct, removeProduct,
+  CATS, normCat, isUnlimited,
+  getPricing, getAllPricing, setPricing, resetPricing,
+  priceFor, applyPricing, setManualPrice, clearManualPrice,
+  PRICING_DEFAULTS,
   topHolders, recentUsers, ledgerRecent, userList,
   getRewards, getReward, setReward, setRewardConfig, resetRewardConfig, computeReward,
   addRewardAction, removeRewardAction, grantReward,
