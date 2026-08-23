@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.10.0 | 2026-08-23 | مرکز جوایز + ماموریت + زیرمجموعه‌گیری
+ *  نسخه: 1.11.0 | 2026-08-23 | مرکز جوایز + ماموریت + دستیار و دیده‌بان رفرال
  *  ۱.۶.۰: تشخیص نبود هوک getPlans + راه «افزودن دستی» محصول
  * ════════════════════════════════════════════════════════════════
  *
@@ -148,7 +148,7 @@ const SCREEN_EXACT = new Set([
   'admin', 'admin:hub', 'admin:tier', 'admin:miss', 'admin:missnew',
   'admin:cap', 'admin:rewards', 'admin:settings', 'admin:texts',
   'admin:ref', 'admin:reftiers', 'admin:refinv', 'admin:refms',
-  'admin:refcap', 'admin:reftop',
+  'admin:refcap', 'admin:reftop', 'admin:refsmart', 'admin:refguard',
   'admin:products', 'admin:padd', 'admin:users', 'admin:allusers',
   'admin:pricing', 'admin:stats', 'admin:ledger', 'admin:help',
 ]);
@@ -178,6 +178,7 @@ const PARENT_EXACT = {
   'admin:ref': 'admin:hub', 'admin:reftiers': 'admin:ref',
   'admin:refinv': 'admin:ref', 'admin:refms': 'admin:ref',
   'admin:refcap': 'admin:ref', 'admin:reftop': 'admin:ref',
+  'admin:refsmart': 'admin:ref', 'admin:refguard': 'admin:ref',
   'admin:texts': 'admin', 'admin:products': 'admin', 'admin:padd': 'admin:products',
   'admin:users': 'admin', 'admin:allusers': 'admin:users',
   'admin:pricing': 'admin', 'admin:stats': 'admin', 'admin:ledger': 'admin',
@@ -744,6 +745,12 @@ function missionSummary(m) {
   return m.kind;
 }
 
+/** کوتاه‌کردن نام برای دکمه؛ متن کامل همیشه در بدنه پیام است. */
+function brief(t, n) {
+  const x = String(t || '').trim();
+  return x.length <= n ? x : x.slice(0, n - 1) + '…';
+}
+
 function screenMissions() {
   const list = coin.listMissions(true);
   let text = '<b>' + T.missions + '</b>\n' + LINE + '\n\n';
@@ -754,10 +761,16 @@ function screenMissions() {
             'می‌گیرد — مثل «اولین خریدت را بکن» یا «سه روز\n' +
             'پیاپی بیا».</i>';
   } else {
-    text += '<i>' + fa(list.length) + ' ماموریت — روی هرکدام بزن</i>\n';
+    text += '<i>' + fa(list.length) + ' ماموریت — روی هرکدام بزن</i>\n\n';
     for (const m of list) {
-      rows.push([{ text: (m.active === false ? '⏸ ' : '🎯 ') + m.title +
-                         ' — ' + fa(m.coins) + ' کوین (' + missionSummary(m) + ')',
+      // شرح کامل در متن می‌آید؛ روی دکمه فقط نام کوتاه و جایزه،
+      // وگرنه در موبایل وسط اسم بریده می‌شود.
+      text += (m.active === false ? '⏸' : '🎯') + ' <b>' + m.title +
+              '</b> — <code>' + fa(m.coins) + '</code> کوین\n' +
+              '     <i>' + missionSummary(m) +
+              (m.repeat === 'always' ? ' · همیشگی' : ' · یک‌بار') + '</i>\n';
+      rows.push([{ text: (m.active === false ? '⏸ ' : '🎯 ') +
+                         brief(m.title, 16) + ' · ' + fa(m.coins),
                    callback_data: 'admin:missed:' + m.id }]);
     }
   }
@@ -922,6 +935,91 @@ function screenMissionTitle(uid, id) {
 
 // ── زیرمجموعه‌گیری (رفرال) ─────────────────────────────────
 
+
+/**
+ * دستیار هوشمند: پیشنهاد عدد بر پایه میانگین خرید واقعی همین
+ * ربات، نه عددی که من از خودم درآورده باشم.
+ */
+function screenRefSmart() {
+  const sg = coin.refSuggest(1000);
+  if (!sg.ok) {
+    return { text: '<b>🤖 دستیار تنظیم</b>\n' + LINE + '\n\n' +
+                   '⏳ ' + sg.reason + '\n\n' +
+                   '<i>بعد از چند خرید واقعی، اینجا بر اساس میانگین\n' +
+                   'خرید ربات خودت پیشنهاد می‌دهم.</i>',
+             markup: kb([[{ text: T.back, callback_data: 'admin:back' }]]) };
+  }
+
+  const v = sg.verdict;
+  const icon = v === 'متعادل' ? '✅' : (v.startsWith('گران') ? '⚠️' : '💤');
+
+  const text =
+    '<b>🤖 دستیار تنظیم</b>\n' + LINE + '\n\n' +
+    '📊 میانگین خرید ربات تو\n' +
+    '<code>' + fa(sg.avgPurchase) + '</code> تومان\n\n' +
+    icon + ' <b>وضعیت فعلی: ' + v + '</b>\n' +
+    'الان بابت هر دعوتِ خریدار روی‌هم <code>' +
+    fa(sg.current.totalCoins) + '</code> کوین می‌دهی\n' +
+    'یعنی حدود <code>' + fa(sg.current.pctOfPurchase) +
+    '٪</code> ارزش خرید.\n\n' +
+    '<i>قاعده‌ای که در برنامه‌های موفق تکرار می‌شود: مجموع\n' +
+    'جایزه دوطرفه بین ۵ تا ۱۰ درصد ارزش خرید. کمتر از ۳٪\n' +
+    'دیده نمی‌شود، بیشتر از ۱۵٪ سودت را می‌خورد.</i>\n\n' +
+    '💡 <b>پیشنهاد من</b>\n' +
+    '   پله‌ها <code>' + sg.suggest.tiers.map(fa).join(' / ') +
+    '</code> · بقیه <code>' + fa(sg.suggest.rest) + '</code>\n' +
+    '   هدیه دعوت‌شده <code>' + fa(sg.suggest.invitee) + '</code>\n' +
+    '   پله‌های تعدادی <code>' +
+    sg.suggest.milestones.map(m => fa(m.coins)).join(' / ') + '</code>\n\n' +
+    '<i>می‌توانی یکجا اعمالش کنی یا دستی تنظیم کنی.</i>';
+
+  return { text: text, markup: kb([
+    [{ text: '✅ اعمال پیشنهاد', callback_data: 'admin:refapply',
+       style: 'success' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
+  ]) };
+}
+
+function doRefApply() {
+  coin.refApplySuggestion(1000);
+  return screenRef();
+}
+
+/**
+ * دیده‌بان تقلب. قضاوت نمی‌کند و کسی را مسدود نمی‌کند —
+ * فقط می‌گوید کجا را نگاه کن. تصمیم با ادمین است.
+ */
+function screenRefGuard() {
+  const sus = coin.refSuspects(30);
+  let text = '<b>🛡 دیده‌بان تقلب</b>\n' + LINE + '\n\n';
+  const rows = [];
+
+  if (!sus.length) {
+    text += '✅ <b>هیچ رفتار مشکوکی دیده نمی‌شود.</b>\n\n' +
+            '<i>معیارها: زیرمجموعه‌هایی که پشت سر هم و در چند\n' +
+            'ثانیه ثبت شده‌اند، یا ثبت‌نام کرده‌اند ولی هیچ‌وقت\n' +
+            'خرید نکرده‌اند.</i>';
+  } else {
+    text += '<i>' + fa(sus.length) + ' نفر بررسی لازم دارند. این\n' +
+            'اتهام نیست — فقط الگوی غیرعادی است.</i>\n\n';
+    for (const x of sus.slice(0, 8)) {
+      const icon = x.level === 'high' ? '🔴' : '🟡';
+      text += icon + ' <code>' + x.uid + '</code> — نمره ' +
+              fa(x.score) + '\n' +
+              '     ' + fa(x.invites) + ' دعوت · ' + fa(x.buyers) +
+              ' خریدار · ' + fa(x.earned) + ' کوین\n';
+      for (const r of x.reasons) text += '     ↳ <i>' + r + '</i>\n';
+      text += '\n';
+      rows.push([{ text: '👤 ' + String(x.uid).slice(-8) +
+                         ' · نمره ' + fa(x.score),
+                   callback_data: 'admin:user:' + x.uid }]);
+    }
+  }
+
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
+  return { text: text, markup: kb(rows) };
+}
+
 function screenRef() {
   const c = coin.getRefConfig();
   const lb = coin.refLeaderboard(5);
@@ -971,6 +1069,9 @@ function screenRef() {
     [{ text: '🎁 هدیه دعوت‌شده', callback_data: 'admin:refinv' }],
     [{ text: '🏆 پله‌های تعدادی', callback_data: 'admin:refms' }],
     [{ text: '🚦 سقف درآمد', callback_data: 'admin:refcap' }],
+    [{ text: '🤖 دستیار تنظیم', callback_data: 'admin:refsmart',
+       style: 'primary' }],
+    [{ text: '🛡 دیده‌بان تقلب', callback_data: 'admin:refguard' }],
     [{ text: '📊 برترین دعوت‌کننده‌ها', callback_data: 'admin:reftop' }],
     [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
@@ -2652,6 +2753,9 @@ async function route(ctx) {
   else if (d2 === 'admin:refcap') s = screenRefCap();
   else if (d2.startsWith('admin:refcv:')) s = applyRefCap(after(d2, 'admin:refcv:'));
   else if (d2 === 'admin:reftop') s = screenRefTop();
+  else if (d2 === 'admin:refsmart') s = screenRefSmart();
+  else if (d2 === 'admin:refapply') s = doRefApply();
+  else if (d2 === 'admin:refguard') s = screenRefGuard();
   else if (d2.startsWith('admin:capv:')) s = applyCap(after(d2, 'admin:capv:'));
   else if (d2.startsWith('admin:capset:')) s = setCap(after(d2, 'admin:capset:'));
   else if (d2 === 'admin:miss') s = screenMissions();

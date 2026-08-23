@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN — هسته اقتصاد کوین
- *  نسخه: 1.10.0 | 2026-08-23 | جوایز + پلکان + ماموریت + زیرمجموعه‌گیری
+ *  نسخه: 1.11.0 | 2026-08-23 | جوایز + پلکان + ماموریت + زیرمجموعه‌گیری هوشمند
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا فایل جدا:
@@ -1095,6 +1095,173 @@ function refLeaderboard(limit) {
     .slice(0, Math.max(1, Math.floor(limit || 10)));
 }
 
+
+/**
+ * ── لایه هوشمند رفرال ──────────────────────────────────────
+ *
+ * دو چیز که سیستم را از یک ماشین‌حساب ساده جدا می‌کند:
+ *
+ * ۱. تشخیص تقلب. رایج‌ترین سوءاستفاده این است که یک نفر چند
+ *    اکانت بسازد و خودش را دعوت کند. نشانه‌هایش قابل شمردن است:
+ *    زیرمجموعه‌هایی که پشت سر هم و در چند ثانیه ثبت شده‌اند،
+ *    یا کسانی که ثبت‌نام کرده‌اند ولی هیچ‌وقت خرید نکرده‌اند.
+ *    این تابع قضاوت نمی‌کند و کسی را مسدود نمی‌کند — فقط به
+ *    ادمین می‌گوید کجا را نگاه کند.
+ *
+ * ۲. پیشنهاد تنظیمات. اگر جایزه‌ها از حاشیه سود بیشتر باشد،
+ *    برنامه ضرر می‌دهد؛ اگر خیلی کم باشد کسی دعوت نمی‌کند.
+ *    این تابع با میانگین خرید واقعی همین ربات، بازه پیشنهادی
+ *    را حساب می‌کند.
+ */
+
+/** میانگین مبلغ خرید واقعی در ربات — پایه همه پیشنهادها. */
+function avgPurchaseAmount() {
+  // رویدادها در دفتر (ledger) نگه داشته می‌شوند نه در store؛
+  // یک‌بار اشتباهی s.events خوانده شد و همیشه صفر برمی‌گشت.
+  const ev = readLedger().filter(e =>
+    e && e.meta && Number(e.meta.amount) > 0);
+  if (!ev.length) return 0;
+  const sum = ev.reduce((a, b) => a + Number(b.meta.amount), 0);
+  return Math.round(sum / ev.length);
+}
+
+/**
+ * نمره ریسک یک دعوت‌کننده: صفر تا صد.
+ * هرچه بالاتر، احتمال تقلب بیشتر. آستانه ۶۰ یعنی «نگاهش کن».
+ */
+function refRiskScore(uid) {
+  const list = listInvitees(uid);
+  const reasons = [];
+  if (list.length < 3) return { score: 0, reasons: [], level: 'ok' };
+
+  let score = 0;
+
+  // نشانه ۱: ثبت‌نام دسته‌جمعی. اکانت واقعی با فاصله می‌آید.
+  const times = list.map(x => x.at).filter(Boolean).sort((a, b) => a - b);
+  let burst = 0;
+  for (let i = 1; i < times.length; i++) {
+    if (times[i] - times[i - 1] < 60 * 1000) burst++;
+  }
+  const buyers = list.filter(x => x.purchases > 0).length;
+  const rate = buyers / list.length;
+
+  // خرید واقعی مهم‌ترین نشانه سلامت است: متقلب پول خرج نمی‌کند.
+  // پس وزن «سرعت ثبت‌نام» را با نرخ خرید تعدیل می‌کنیم، وگرنه
+  // کسی که در یک کمپین چند دوست واقعی آورده متهم می‌شود.
+  if (burst >= 3) {
+    const pct = Math.round((burst / times.length) * 100);
+    const weight = 1 - Math.min(1, rate * 1.25);
+    const add = Math.round(Math.min(40, pct) * weight);
+    if (add > 0) {
+      score += add;
+      reasons.push(burst + ' زیرمجموعه با فاصله کمتر از یک دقیقه');
+    }
+  }
+
+  // نشانه ۲: هیچ‌کس خرید نکرده. اکانت الکی پول نمی‌دهد.
+  if (list.length >= 5 && rate < 0.2) {
+    score += 30;
+    reasons.push('فقط ' + Math.round(rate * 100) + '٪ زیرمجموعه‌ها خرید کرده‌اند');
+  }
+
+  // نشانه ۳: همه دقیقاً یک خرید کرده‌اند و بس — الگوی ماشینی.
+  if (buyers >= 4) {
+    const one = list.filter(x => x.purchases === 1).length;
+    if (one === buyers) {
+      score += 20;
+      reasons.push('همه زیرمجموعه‌ها دقیقاً یک خرید دارند');
+    }
+  }
+
+  // نشانه ۴: درآمد بالا با زیرمجموعه‌های کم‌خرج
+  const earned = list.reduce((a, b) => a + (b.earned || 0), 0);
+  if (earned > 500 && rate < 0.5) {
+    score += 15;
+    reasons.push('درآمد بالا با نرخ خرید پایین');
+  }
+
+  score = Math.min(100, score);
+  return {
+    score: score,
+    reasons: reasons,
+    level: score >= 60 ? 'high' : (score >= 30 ? 'watch' : 'ok'),
+    invites: list.length,
+    buyers: buyers,
+    earned: earned,
+  };
+}
+
+/** همه دعوت‌کننده‌های مشکوک، از پرریسک به کم‌ریسک. */
+function refSuspects(minScore) {
+  const min = minScore === undefined ? 30 : Number(minScore);
+  const s = loadStore();
+  const seen = new Set();
+  const out = [];
+  for (const v of Object.values(s.referrals || {})) {
+    if (!v || !v.by || seen.has(String(v.by))) continue;
+    seen.add(String(v.by));
+    const r = refRiskScore(String(v.by));
+    if (r.score >= min) out.push(Object.assign({ uid: String(v.by) }, r));
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+
+/**
+ * پیشنهاد تنظیمات بر پایه داده واقعی همین ربات.
+ * قاعده‌ای که در برنامه‌های موفق تکرار می‌شود: مجموع جایزه
+ * دوطرفه حدود ۵ تا ۱۰ درصد ارزش خرید باشد — کمتر از آن دیده
+ * نمی‌شود، بیشتر از آن حاشیه سود را می‌خورد.
+ */
+function refSuggest(coinValueToman) {
+  const avg = avgPurchaseAmount();
+  const val = Number(coinValueToman) || 1000;   // ارزش هر کوین
+  const c = getRefConfig();
+
+  if (!avg) {
+    return { ok: false,
+             reason: 'هنوز خرید کافی ثبت نشده تا میانگین حساب شود' };
+  }
+
+  // ۷٪ میانه بازه ۵ تا ۱۰ درصد
+  const budgetToman = avg * 0.07;
+  const budgetCoins = Math.max(1, Math.round(budgetToman / val));
+
+  // تقسیم: حدود ۶۰٪ به دعوت‌کننده، ۴۰٪ به دعوت‌شده
+  const first = Math.max(1, Math.round(budgetCoins * 0.6));
+  const invitee = Math.max(1, Math.round(budgetCoins * 0.4));
+
+  const current = (c.tiers[0] || 0) + c.invitee;
+  const currentPct = avg ? ((current * val) / avg) * 100 : 0;
+
+  return {
+    ok: true,
+    avgPurchase: avg,
+    coinValue: val,
+    suggest: {
+      tiers: [first, Math.round(first * 0.6), Math.round(first * 0.4)],
+      rest: Math.max(1, Math.round(first * 0.2)),
+      invitee: invitee,
+      milestones: [
+        { need: 5,  coins: first * 2 },
+        { need: 10, coins: first * 5 },
+        { need: 25, coins: first * 14 },
+      ],
+    },
+    current: { first: c.tiers[0] || 0, invitee: c.invitee,
+               totalCoins: current, pctOfPurchase: Math.round(currentPct) },
+    verdict: currentPct > 15 ? 'گران — حاشیه سودت را می‌خورد'
+           : (currentPct < 3 ? 'کم — انگیزه‌ای نمی‌سازد' : 'متعادل'),
+  };
+}
+
+/** اعمال یکجای پیشنهاد. */
+function refApplySuggestion(coinValueToman) {
+  const sg = refSuggest(coinValueToman);
+  if (!sg.ok) return sg;
+  setRefConfig(sg.suggest);
+  return Object.assign({ applied: true }, sg);
+}
+
 function spendForPlan(uid, planId) {
   const price = getCoinPrice(planId);
   if (price === null) return { ok: false, reason: 'این محصول با کوین فروخته نمی‌شود' };
@@ -1605,6 +1772,25 @@ function selftest() {
     'm.setInviter("rk3","rk"); m.onReferralPurchase("rk3",50000);',
     'a(m.getBalance("rk")<=60,"سقف روزانه جلوی جایزه رفرال را هم می‌گیرد");',
     'm.setSetting("dailyCap",200);',
+    // ── لایه هوشمند رفرال
+    'm.setSetting("dailyCap",0);',
+    'for(let i=0;i<6;i++){m.setInviter("sg"+i,"SGOOD"); if(i<5) m.onReferralPurchase("sg"+i,120000);}',
+    'a(m.refRiskScore("SGOOD").level==="ok","دعوت‌کننده سالم نمره پایین می‌گیرد");',
+    'for(let i=0;i<8;i++) m.setInviter("sb"+i,"SBAD");',
+    'a(m.refRiskScore("SBAD").score>=60,"اکانت‌سازی دسته‌جمعی بدون خرید شناسایی شد");',
+    'a(m.refRiskScore("SBAD").reasons.length>=2,"دلیل مشکوک‌بودن ذکر می‌شود");',
+    'a(m.refSuspects(30).some(x=>x.uid==="SBAD"),"متقلب در فهرست مشکوک‌هاست");',
+    'a(!m.refSuspects(30).some(x=>x.uid==="SGOOD"),"سالم در فهرست مشکوک نیست");',
+    'a(m.refRiskScore("SGOOD").level==="ok","خرید واقعی از اتهام سرعت جلوگیری می‌کند");',
+    'a(m.avgPurchaseAmount()>0,"میانگین خرید از دفتر خوانده شد");',
+    'const sgg=m.refSuggest(1000);',
+    'a(sgg.ok,"پیشنهاد تنظیمات ساخته شد");',
+    'a(sgg.suggest.tiers.length===3,"سه پله پیشنهاد شد");',
+    'a(sgg.suggest.invitee>0,"هدیه دعوت‌شده پیشنهاد شد");',
+    'a(typeof sgg.verdict==="string","داوری وضعیت فعلی داده شد");',
+    'm.refApplySuggestion(1000);',
+    'a(m.getRefConfig().tiers[0]===sgg.suggest.tiers[0],"پیشنهاد یکجا اعمال شد");',
+    'm.setSetting("dailyCap",200);',
     'console.log("\\nهمه تست‌ها گذشتند.");',
   ].join('\n');
   const f = path.join(tmp, 't.js');
@@ -1634,6 +1820,8 @@ module.exports = {
   REF_DEFAULTS, getRefConfig, setRefConfig, refTierCoins,
   setInviter, getInviter, listInvitees, refStats,
   onReferralPurchase, totalRefEarned, refLeaderboard,
+  avgPurchaseAmount, refRiskScore, refSuspects,
+  refSuggest, refApplySuggestion,
   listMissions, getMission, setMission, removeMission,
   missionProgress, missionClaimed, claimMissionById, MISSION_KINDS,
   claimDaily, dailyStatus, coinsForPurchase,
