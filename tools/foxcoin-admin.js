@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.9.0 | 2026-08-23 | فاکس شاپ + مرکز جوایز + ماموریت‌ها
+ *  نسخه: 1.9.1 | 2026-08-23 | مرکز جوایز + ماموریت‌ها + ناوبری مسیرمحور
  *  ۱.۶.۰: تشخیص نبود هوک getPlans + راه «افزودن دستی» محصول
  * ════════════════════════════════════════════════════════════════
  *
@@ -68,7 +68,33 @@ const TEXTS_FA = {
   earn_referral: 'عنوان بخش دعوت دوستان',
   earn_daily: 'عنوان بخش حضور روزانه',
   earn_first_purchase: 'عنوان بخش اولین خرید',
+  earn_signup_welcome: 'عنوان هدیه خوش‌آمد',
   earn_ref_purchase: 'عنوان بخش خرید زیرمجموعه',
+};
+
+/**
+ * متن‌ها در دو دسته. قبلاً هر سیزده‌تا در یک لیست بلند می‌آمدند و
+ * پیش‌نمایششان داخل خودِ دکمه بود — دکمه دو خطی و درهم می‌شد.
+ * حالا پیش‌نمایش‌ها در متن پیام‌اند و دکمه‌ها فقط نام کوتاه.
+ */
+const TEXT_CATS = [
+  { id: 'guide', icon: '📖', label: 'راهنما و منو',
+    keys: ['menu_note', 'guide_what', 'guide_rules', 'guide_footer'] },
+  { id: 'earn', icon: '💰', label: 'عنوان راه‌های کسب کوین',
+    keys: ['earn_signup', 'earn_signup_welcome', 'earn_daily', 'earn_purchase',
+           'earn_first_purchase', 'earn_mission', 'earn_join',
+           'earn_referral', 'earn_ref_purchase'] },
+];
+
+/** نام کوتاه برای دکمه — بدون تکرار «عنوان بخش» در هر ردیف. */
+const TEXT_SHORT = {
+  menu_note: 'تشویقی منو', guide_what: 'کوین چیست',
+  guide_rules: 'قوانین', guide_footer: 'پایان راهنما',
+  earn_signup: 'ثبت‌نام', earn_signup_welcome: 'هدیه خوش‌آمد',
+  earn_daily: 'حضور روزانه', earn_purchase: 'خرید',
+  earn_first_purchase: 'اولین خرید', earn_mission: 'ماموریت',
+  earn_join: 'جوین', earn_referral: 'دعوت دوستان',
+  earn_ref_purchase: 'خرید زیرمجموعه',
 };
 
 /**
@@ -77,6 +103,117 @@ const TEXTS_FA = {
  * بستن درِ واقعی همچنان isAdmin است.
  */
 const pendingEdits = new Map();
+
+/**
+ * ── پشته ناوبری ────────────────────────────────────────────
+ * باگ: دکمه «بازگشت» هر صفحه مقصدش ثابت کدنویسی شده بود، پس هر
+ * صفحه فرض می‌کرد فقط از یک راه باز می‌شود. وقتی «مرکز جوایز»
+ * راه دومی به پلکان باز کرد، بازگشتِ پلکان همچنان به والد قدیمی
+ * می‌رفت و ادمین سر از صفحه‌ای درمی‌آورد که اصلاً نرفته بود.
+ *
+ * حالا مسیر واقعی هر ادمین نگه داشته می‌شود و «بازگشت» یعنی یک
+ * پله عقب در همان مسیری که خودش آمده.
+ */
+const navStacks = new Map();
+
+/** آیا این callback یک «صفحه» است یا یک «عمل»؟ فقط صفحه‌ها در مسیر ثبت می‌شوند. */
+const SCREEN_EXACT = new Set([
+  'admin', 'admin:hub', 'admin:tier', 'admin:miss', 'admin:missnew',
+  'admin:cap', 'admin:rewards', 'admin:settings', 'admin:texts',
+  'admin:products', 'admin:padd', 'admin:users', 'admin:allusers',
+  'admin:pricing', 'admin:stats', 'admin:ledger', 'admin:help',
+]);
+
+const SCREEN_PREFIX = [
+  'admin:missed:', 'admin:missc:', 'admin:missn:', 'admin:missdel:',
+  'admin:tedit:', 'admin:tcat:', 'admin:pedit:', 'admin:pgb:', 'admin:pdays:',
+  'admin:pcoins:', 'admin:pplan:', 'admin:pdel:',
+  'admin:paddcat:', 'admin:paddplan:', 'admin:paddgb:', 'admin:padddays:',
+  'admin:paddcoins:', 'admin:user:', 'admin:uhist:', 'admin:grant:',
+  'admin:revoke:', 'admin:setbal:', 'admin:pcf:', 'admin:set:',
+  'admin:rcoins:', 'admin:allusers:',
+];
+
+function isScreen(d) {
+  return SCREEN_EXACT.has(d) || SCREEN_PREFIX.some(x => d.startsWith(x));
+}
+
+/**
+ * والد پیش‌فرض — فقط وقتی به کار می‌آید که پشته خالی باشد
+ * (مثلاً ربات بعد از ری‌استارت، اولین کلیک ادمین «بازگشت» باشد).
+ */
+const PARENT_EXACT = {
+  'admin:hub': 'admin', 'admin:tier': 'admin:hub', 'admin:miss': 'admin:hub',
+  'admin:missnew': 'admin:miss', 'admin:cap': 'admin:hub',
+  'admin:rewards': 'admin:hub', 'admin:settings': 'admin',
+  'admin:texts': 'admin', 'admin:products': 'admin', 'admin:padd': 'admin:products',
+  'admin:users': 'admin', 'admin:allusers': 'admin:users',
+  'admin:pricing': 'admin', 'admin:stats': 'admin', 'admin:ledger': 'admin',
+  'admin:help': 'admin',
+};
+
+const PARENT_PREFIX = [
+  ['admin:missed:', 'admin:miss'], ['admin:missc:', 'admin:miss'],
+  ['admin:missn:', 'admin:miss'], ['admin:missdel:', 'admin:miss'],
+  ['admin:tcat:', 'admin:texts'], ['admin:tedit:', 'admin:texts'],
+  ['admin:pedit:', 'admin:products'], ['admin:pgb:', 'admin:products'],
+  ['admin:pdays:', 'admin:products'], ['admin:pcoins:', 'admin:products'],
+  ['admin:pplan:', 'admin:products'], ['admin:pdel:', 'admin:products'],
+  ['admin:paddcat:', 'admin:padd'], ['admin:paddplan:', 'admin:padd'],
+  ['admin:paddgb:', 'admin:padd'], ['admin:padddays:', 'admin:padd'],
+  ['admin:paddcoins:', 'admin:padd'],
+  ['admin:user:', 'admin:users'], ['admin:uhist:', 'admin:users'],
+  ['admin:grant:', 'admin:users'], ['admin:revoke:', 'admin:users'],
+  ['admin:setbal:', 'admin:users'], ['admin:allusers:', 'admin:users'],
+  ['admin:pcf:', 'admin:pricing'], ['admin:set:', 'admin:settings'],
+  ['admin:rcoins:', 'admin:rewards'],
+];
+
+function parentOf(d) {
+  if (PARENT_EXACT[d]) return PARENT_EXACT[d];
+  for (const [pre, par] of PARENT_PREFIX) if (d.startsWith(pre)) return par;
+  return 'admin';
+}
+
+/**
+ * ثبت صفحه در مسیر. اگر ادمین به صفحه‌ای برگردد که قبلاً در مسیر
+ * بوده، دُم مسیر بریده می‌شود تا حلقه نسازد (رفت و برگشت پیاپی
+ * بین دو صفحه نباید پشته را بی‌نهایت بزرگ کند).
+ */
+function navPush(uid, d) {
+  uid = String(uid);
+  let st = navStacks.get(uid) || [];
+
+  // منوی اصلی همیشه ریشه است: رفتن به آن یعنی مسیر تازه.
+  if (d === 'admin') { navStacks.set(uid, ['admin']); return; }
+
+  // ریشه را تضمین کن تا «بازگشت» هیچ‌وقت به بن‌بست نرسد.
+  if (st[0] !== 'admin') st = ['admin'].concat(st);
+
+  if (st[st.length - 1] === d) { navStacks.set(uid, st); return; }
+
+  // اگر همین صفحه جای دیگری در مسیر هست، فقط وقتی مسیر را آنجا
+  // می‌بُریم که والدش همان صفحه فعلی باشد — یعنی ادمین واقعاً حلقه
+  // زده و دارد برمی‌گردد. وگرنه از راه دیگری به این صفحه رسیده و
+  // مسیر تازه باید حفظ شود: «جوایز» هم از مرکز جوایز باز می‌شود،
+  // هم از تنظیمات، و این دو یکی نیستند.
+  const at = st.indexOf(d);
+  if (at > 0 && st[at - 1] === st[st.length - 1]) st.length = at + 1;
+  else st.push(d);
+
+  // پشته را کوتاه نگه دار، ولی ریشه را قربانی نکن.
+  while (st.length > 12) st.splice(1, 1);
+  navStacks.set(uid, st);
+}
+
+/** یک پله عقب در مسیر واقعی همین ادمین. */
+function navBack(uid) {
+  uid = String(uid);
+  const st = navStacks.get(uid) || [];
+  const cur = st.pop();
+  navStacks.set(uid, st);
+  return st[st.length - 1] || parentOf(cur || 'admin');
+}
 
 function pendingText(uid) {
   const p = pendingEdits.get(String(uid));
@@ -223,7 +360,7 @@ function screenMenu() {
     '🦊 کوین در گردش\n<code>' + fa(s.circulating) + '</code>\n\n' +
     '📊 مجموع رویدادها\n<code>' + fa(s.events) + '</code>\n\n' +
     '<i>هر تغییر با دکمه انجام می‌شود و در دفتر کل ثبت می‌شود.</i>\n\n' +
-    '<code>نسخه 1.9.0</code>';
+    '<code>نسخه 1.9.1</code>';
   return {
     text: text,
     markup: kb([
@@ -263,7 +400,7 @@ function screenStats() {
     '📤 <code>' + fa(todaySpent) + '</code> خرج\n' +
     '📊 <code>' + fa(todayEvents.length) + '</code> رویداد';
   return { text: text, markup: kb([
-    [{ text: T.back, callback_data: 'admin' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -299,7 +436,7 @@ function screenSettings() {
     }
     rows.push([line]);
   }
-  rows.push([{ text: T.back, callback_data: 'admin' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   const text =
     '<b>' + T.settings + '</b>\n' + LINE + '\n\n' +
     '<i>روی هر آیتم بزنید تا ویرایش شود.\n' +
@@ -382,7 +519,7 @@ function screenTier() {
   rows.push(addRow);
   rows.push([{ text: t.enabled ? '⛔️ خاموش کردن' : '✅ روشن کردن',
                callback_data: 'admin:tiertog' }]);
-  rows.push([{ text: T.back, callback_data: 'admin:rewards' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -465,7 +602,7 @@ function screenHub() {
     [{ text: '🎯 ماموریت‌ها', callback_data: 'admin:miss' }],
     [{ text: '🚦 سقف روزانه', callback_data: 'admin:cap' }],
     [{ text: '📋 همه جوایز فعالیت', callback_data: 'admin:rewards' }],
-    [{ text: T.back, callback_data: 'admin' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -490,7 +627,7 @@ function screenCap() {
      { text: '➕1000', callback_data: 'admin:capv:1000' }],
     [{ text: '♾ بدون سقف', callback_data: 'admin:capset:0' },
      { text: '↩️ پیش‌فرض (۲۰۰)', callback_data: 'admin:capset:200' }],
-    [{ text: T.back, callback_data: 'admin:hub' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -541,7 +678,7 @@ function screenMissions() {
   }
   rows.push([{ text: '➕ ماموریت جدید', callback_data: 'admin:missnew',
                style: 'success' }]);
-  rows.push([{ text: T.back, callback_data: 'admin:hub' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -558,7 +695,7 @@ function screenMissionNew() {
       [{ text: '📅 هفت روز پیاپی', callback_data: 'admin:misstpl:d7' }],
       [{ text: '💰 رسیدن به ۱۰۰ کوین', callback_data: 'admin:misstpl:b100' }],
       [{ text: '✋ ماموریت دستی', callback_data: 'admin:misstpl:man' }],
-      [{ text: T.back, callback_data: 'admin:miss' }],
+      [{ text: T.back, callback_data: 'admin:back' }],
     ]),
   };
 }
@@ -572,9 +709,16 @@ const MISSION_TEMPLATES = {
   man:  { title: 'ماموریت دستی', kind: 'manual', need: 0, coins: 10 },
 };
 
-function createMissionFromTemplate(key) {
+function createMissionFromTemplate(key, uid) {
   const tpl = MISSION_TEMPLATES[String(key)];
   if (!tpl) return screenMissionNew();
+  // انتخابگر الگو گذراست: از مسیر برش دار تا «بازگشت» به فهرست
+  // ماموریت‌ها برود، نه به صفحه‌ای که کارش تمام شده.
+  if (uid !== undefined) {
+    const st = navStacks.get(String(uid)) || [];
+    if (st[st.length - 1] === 'admin:missnew') st.pop();
+    navStacks.set(String(uid), st);
+  }
   let id = 'M' + Date.now().toString(36).toUpperCase();
   for (let i = 0; i < 5 && coin.getMission(id); i++) id += Math.floor(Math.random() * 10);
   coin.setMission(Object.assign({ id: id, repeat: 'once', active: true }, tpl));
@@ -607,7 +751,7 @@ function screenMissionEdit(id) {
       callback_data: 'admin:missa:' + m.id },
   ]);
   rows.push([{ text: '🗑 حذف', callback_data: 'admin:missdel:' + m.id }]);
-  rows.push([{ text: T.back, callback_data: 'admin:miss' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -630,7 +774,7 @@ function screenMissionNum(id, field) {
        { text: '➖1', callback_data: 'admin:' + f + 'v:' + id + ':-1' },
        { text: '➕1', callback_data: 'admin:' + f + 'v:' + id + ':1' },
        { text: '➕10', callback_data: 'admin:' + f + 'v:' + id + ':10' }],
-      [{ text: T.back, callback_data: 'admin:missed:' + id }],
+      [{ text: T.back, callback_data: 'admin:back' }],
     ]) };
 }
 
@@ -718,7 +862,7 @@ function screenRewards() {
                 '</code> ' + rep + off,
                  callback_data: 'admin:rcoins:' + key }]);
   }
-  rows.push([{ text: T.back, callback_data: 'admin:settings' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -817,7 +961,7 @@ function screenRewardEdit(key) {
     rows.push([{ text: '🗑 حذف فعالیت', callback_data: 'admin:rdel:' + key,
                  style: 'danger' }]);
   }
-  rows.push([{ text: T.back, callback_data: 'admin:rewards' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -912,25 +1056,69 @@ function previewText(s, n) {
  */
 function screenTexts() {
   const txt = coin.getTexts();
-  let text = '<b>' + T.texts + '</b>\n' + LINE + '\n\n' +
-             '<i>متن‌هایی که کاربر در بخش‌های فاکس کوین می‌بیند.\n' +
-             'روی هر آیتم بزنید، سپس متن جدید را بفرستید.\n' +
-             '🟢 یعنی متن سفارشی (غیر از پیش‌فرض).</i>\n';
+  let custom = 0;
+  for (const k of Object.keys(coin.TEXTS)) if (txt[k] !== coin.TEXTS[k]) custom++;
+
   const rows = [];
-  for (const key of Object.keys(coin.TEXTS)) {
-    const label = TEXTS_FA[key] || key;
-    const val = txt[key];
-    const custom = val !== coin.TEXTS[key];
-    const btn = {
-      text: (custom ? '🟢 ' : '') + label + '\n<i>' + previewText(val, 40) + '</i>',
-      callback_data: 'admin:tedit:' + key,
-    };
-    rows.push(custom
-      ? [btn, { text: '↩️ پیش‌فرض', callback_data: 'admin:treset:' + key }]
-      : [btn]);
+  let text = '<b>' + T.texts + '</b>\n' + LINE + '\n\n' +
+             '<i>متن‌هایی که کاربر در فاکس کوین می‌بیند.</i>\n\n';
+
+  for (const c of TEXT_CATS) {
+    const n = c.keys.filter(k => txt[k] !== coin.TEXTS[k]).length;
+    text += c.icon + ' <b>' + c.label + '</b> — ' + fa(c.keys.length) + ' متن' +
+            (n ? ' <code>' + fa(n) + ' سفارشی</code>' : '') + '\n';
+    rows.push([{ text: c.icon + ' ' + c.label + (n ? ' (' + fa(n) + '🟢)' : ''),
+                 callback_data: 'admin:tcat:' + c.id }]);
   }
-  rows.push([{ text: T.back, callback_data: 'admin' }]);
+
+  text += '\n' + (custom
+    ? '🟢 <code>' + fa(custom) + '</code> متن سفارشی شده'
+    : '⚪️ همه متن‌ها پیش‌فرض‌اند');
+
+  if (custom) {
+    rows.push([{ text: '↩️ برگرداندن همه به پیش‌فرض',
+                 callback_data: 'admin:tresetall' }]);
+  }
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
+}
+
+/** یک دسته متن: پیش‌نمایش‌ها در پیام، دکمه‌ها کوتاه و یک‌خطی. */
+function screenTextCat(id) {
+  const c = TEXT_CATS.find(x => x.id === String(id));
+  if (!c) return screenTexts();
+  const txt = coin.getTexts();
+
+  let text = '<b>' + c.icon + ' ' + c.label + '</b>\n' + LINE + '\n\n';
+  const rows = [];
+
+  for (const key of c.keys) {
+    const val = txt[key];
+    const isCustom = val !== coin.TEXTS[key];
+    text += (isCustom ? '🟢' : '⚪️') + ' <b>' + (TEXT_SHORT[key] || key) + '</b>\n' +
+            '<i>' + previewText(val, 60) + '</i>\n\n';
+    const row = [{ text: (isCustom ? '🟢 ' : '✏️ ') + (TEXT_SHORT[key] || key),
+                   callback_data: 'admin:tedit:' + key }];
+    if (isCustom) {
+      row.push({ text: '↩️', callback_data: 'admin:treset:' + key });
+    }
+    rows.push(row);
+  }
+
+  text += '<i>روی هر کدام بزن تا عوضش کنی. ↩️ یعنی برگشت به پیش‌فرض.</i>';
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+/** دسته‌ای که این کلید در آن است — برای بازگشت درست بعد از ویرایش. */
+function catOfKey(key) {
+  const c = TEXT_CATS.find(x => x.keys.includes(String(key)));
+  return c ? c.id : null;
+}
+
+function resetAllTexts() {
+  for (const k of Object.keys(coin.TEXTS)) coin.resetText(k);
+  return screenTexts();
 }
 
 /** فعال‌کردن حالت دریافت متن برای همین ادمین + نمایش راهنما. */
@@ -938,32 +1126,46 @@ function screenTextEdit(uid, key) {
   key = String(key);
   if (!(key in coin.TEXTS)) return screenTexts();
   const txt = coin.getTexts();
-  const label = TEXTS_FA[key] || key;
   const cur = txt[key];
   const isCustom = cur !== coin.TEXTS[key];
+  const label = TEXT_SHORT[key] || TEXTS_FA[key] || key;
+
   pendingEdits.set(String(uid), {
     key: key, at: Date.now(),
     prompt: '📝 ' + label + ' — متن جدید را بفرست.\n' +
             '<i>فعلی: ' + previewText(cur, 80) + '</i>',
   });
+
+  const hasVar = coin.TEXTS[key].includes('{dailyCap}');
+  const rows = [];
+  if (isCustom) {
+    rows.push([{ text: '↩️ برگشت به پیش‌فرض',
+                 callback_data: 'admin:treset:' + key }]);
+  }
+  rows.push([{ text: '🔙 انصراف', callback_data: 'admin:tcancel' }]);
+
   return {
     text: '<b>📝 ' + label + '</b>\n' + LINE + '\n\n' +
-          'متن فعلی\n<i>' + previewText(cur, 220) + '</i>\n\n' +
-          (isCustom ? '🟢 سفارشی' : '⚪️ پیش‌فرض') + '\n\n' +
-          '<b>متن جدید را همین‌جا بفرست.</b>\n' +
-          '<i>بدون < یا > — حداکثر ۱۴۰۰ نویسه.\n' +
-          'اگر پیام «متن را بفرست» نیامد، از خط فرمان:\n' +
-          '<code>node foxcoin.js text ' + key + ' <متن></code></i>',
-    markup: kb([
-      [{ text: '↩️ برگشت به پیش‌فرض', callback_data: 'admin:treset:' + key }],
-      [{ text: '🔙 انصراف', callback_data: 'admin:tcancel' }],
-    ]),
+          (isCustom ? '🟢 سفارشی' : '⚪️ پیش‌فرض') +
+          ' · <code>' + fa(cur.length) + '</code> نویسه\n\n' +
+          '<b>متن فعلی</b>\n<i>' + previewText(cur, 220) + '</i>\n\n' +
+          (isCustom
+            ? '<b>پیش‌فرض</b>\n<i>' + previewText(coin.TEXTS[key], 120) + '</i>\n\n'
+            : '') +
+          '📨 <b>متن جدید را همین‌جا بفرست.</b>\n\n' +
+          (hasVar
+            ? '<i>💡 <code>{dailyCap}</code> را نگه دار — جای سقف روزانه\n' +
+              'پر می‌شود.</i>\n'
+            : '') +
+          '<i>بدون کاراکتر < یا > · حداکثر ۱۴۰۰ نویسه</i>',
+    markup: kb(rows),
   };
 }
 
 function resetTextScreen(key) {
   coin.resetText(key);
-  return screenTexts();
+  const cat = catOfKey(key);
+  return cat ? screenTextCat(cat) : screenTexts();
 }
 
 /**
@@ -1053,7 +1255,7 @@ function screenSetting(key) {
     rows = [];
   }
 
-  rows.push([{ text: T.back, callback_data: 'admin:settings' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -1117,7 +1319,7 @@ function screenProducts() {
       ]);
     }
   }
-  rows.push([{ text: T.back, callback_data: 'admin' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -1151,7 +1353,7 @@ function screenProductEdit(id) {
     [{ text: p.active === false ? '▶️ فعال‌سازی' : '⏸ غیرفعال',
       callback_data: 'admin:ptoggle:' + p.id },
      { text: '🗑 حذف', callback_data: 'admin:pdel:' + p.id }],
-    [{ text: T.back, callback_data: 'admin:products' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -1180,19 +1382,19 @@ async function screenPickProductPlan(ctx, id) {
                'دسته: ' + catLabel(p.cat) + '\n\n';
   if (typeof ctx.getPlans !== 'function') {
     return { text: head + NO_PLANS_HINT,
-             markup: kb([[{ text: T.back, callback_data: 'admin:pedit:' + id }]]) };
+             markup: kb([[{ text: T.back, callback_data: 'admin:back' }]]) };
   }
   let plans = null;
   try { plans = await ctx.getPlans(ctx.env, p.cat); } catch (e) { plans = null; }
   if (!plans || !plans.length) {
     return { text: head + '❌ در این دسته پلنی پیدا نشد.',
-             markup: kb([[{ text: T.back, callback_data: 'admin:pedit:' + id }]]) };
+             markup: kb([[{ text: T.back, callback_data: 'admin:back' }]]) };
   }
   const rows = plans.map(pl => ([
     { text: (pl.name || pl.id) + '  <code>' + pl.id + '</code>',
       callback_data: 'admin:pplanpick:' + id + ':' + pl.id },
   ]));
-  rows.push([{ text: T.back, callback_data: 'admin:pedit:' + id }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: head + '<i>پلن جدید را انتخاب کنید.</i>',
            markup: kb(rows) };
 }
@@ -1225,7 +1427,7 @@ function screenNumAdjust(title, field, id, cur, unit) {
     [{ text: '➕1', callback_data: 'admin:' + field + 'v:' + id + ':1' },
      { text: '➕10', callback_data: 'admin:' + field + 'v:' + id + ':10' },
      { text: '➕100', callback_data: 'admin:' + field + 'v:' + id + ':100' }],
-    [{ text: T.back, callback_data: 'admin:pedit:' + id }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -1301,7 +1503,7 @@ function screenPickCat() {
   return { text: text, markup: kb([
     [{ text: '♾ نامحدود', callback_data: 'admin:paddcat:unlimited' }],
     [{ text: '🧬 حجمی', callback_data: 'admin:paddcat:volume' }],
-    [{ text: T.back, callback_data: 'admin:products' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -1312,7 +1514,7 @@ async function screenPickPlan(ctx, cat) {
     return { text: head + NO_PLANS_HINT,
              markup: kb([
                [{ text: T.manualAdd, callback_data: 'admin:paddman:' + cat }],
-               [{ text: T.back, callback_data: 'admin:padd' }]]) };
+               [{ text: T.back, callback_data: 'admin:back' }]]) };
   }
   let plans = null;
   try { plans = await ctx.getPlans(ctx.env, cat); } catch (e) { plans = null; }
@@ -1320,13 +1522,13 @@ async function screenPickPlan(ctx, cat) {
     return { text: head +
              '❌ در این دسته پلنی پیدا نشد.\n' +
              '<i>اول در ربات پلنی با این دسته بسازید.</i>',
-             markup: kb([[{ text: T.back, callback_data: 'admin:padd' }]]) };
+             markup: kb([[{ text: T.back, callback_data: 'admin:back' }]]) };
   }
   const rows = plans.map(pl => ([
     { text: (pl.name || pl.id) + '  <code>' + pl.id + '</code>',
       callback_data: 'admin:paddplan:' + cat + ':' + pl.id },
   ]));
-  rows.push([{ text: T.back, callback_data: 'admin:padd' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: head + '<i>پلن پایه را انتخاب کنید.</i>',
            markup: kb(rows) };
 }
@@ -1346,7 +1548,7 @@ function screenAddGb(st) {
      { text: '➕10', callback_data: 'admin:paddgb:' + addState(s.cat, s.planId, cur + 10, s.days, s.coins) }],
     [{ text: '⏭ بعدی: مدت', callback_data: 'admin:padddays:' + addState(s.cat, s.planId, cur, s.days, s.coins),
        style: 'success' }],
-    [{ text: T.back, callback_data: 'admin:padd' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -1368,7 +1570,7 @@ function screenAddDays(st) {
      { text: '➕10', callback_data: 'admin:padddays:' + addState(s.cat, s.planId, s.gb, cur + 10, s.coins) }],
     [{ text: '⏭ بعدی: قیمت', callback_data: 'admin:paddcoins:' + addState(s.cat, s.planId, s.gb, cur, s.coins),
        style: 'success' }],
-    [{ text: T.back, callback_data: 'admin:padd' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -1401,7 +1603,7 @@ function screenAddCoins(st) {
       : []),
     [{ text: '✅ ثبت محصول', callback_data: 'admin:paddgo:' + addState(s.cat, s.planId, s.gb, s.days, cur),
        style: 'success' }],
-    [{ text: T.back, callback_data: 'admin:padd' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -1490,7 +1692,7 @@ function screenProductCoins(id) {
     [{ text: '➕1', callback_data: 'admin:pcoinsv:' + id + ':1' },
      { text: '➕10', callback_data: 'admin:pcoinsv:' + id + ':10' },
      { text: '➕100', callback_data: 'admin:pcoinsv:' + id + ':100' }],
-    [{ text: T.back, callback_data: 'admin:pedit:' + id }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -1532,7 +1734,7 @@ function screenUsers() {
     }
   }
   rows.push([{ text: T.allUsers, callback_data: 'admin:allusers:0' }]);
-  rows.push([{ text: T.back, callback_data: 'admin' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -1555,7 +1757,7 @@ function screenAllUsers(page) {
   nav.push({ text: (p + 1) + ' / ' + pages, callback_data: 'admin:allusers:' + p });
   if (p < pages - 1) nav.push({ text: '➡️ بعدی', callback_data: 'admin:allusers:' + (p + 1) });
   rows.push(nav);
-  rows.push([{ text: T.back, callback_data: 'admin:users' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -1599,7 +1801,7 @@ function screenUser(uid) {
     [{ text: T.setBal, callback_data: 'admin:setbal:' + uid + ':' +
       coin.getBalance(uid) + ':other' }],
     [{ text: '📜 تاریخچه کامل', callback_data: 'admin:uhist:' + uid }],
-    [{ text: T.back, callback_data: 'admin:users' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -1619,7 +1821,7 @@ function screenUserHistory(uid) {
     }).join('\n\n');
   }
   return { text: text, markup: kb([
-    [{ text: T.back, callback_data: 'admin:user:' + uid }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -1745,12 +1947,12 @@ function doAdjust(uid, amount, sign, reason, doneLabel) {
   reason = REASON_FA[reason] ? reason : 'other';
   if (!Number.isFinite(amt) || amt <= 0) {
     return { text: '❌ مقدار نامعتبر است.', markup: kb([
-      [{ text: T.back, callback_data: 'admin:user:' + uid }]]) };
+      [{ text: T.back, callback_data: 'admin:back' }]]) };
   }
   const key = (sign < 0 ? 'rev' : 'grant') + ':' + uid;
   if (busy.has(key)) {
     return { text: '⚠️ یک درخواست برای این کاربر در حال انجام است.',
-             markup: kb([[{ text: T.back, callback_data: 'admin:user:' + uid }]]) };
+             markup: kb([[{ text: T.back, callback_data: 'admin:back' }]]) };
   }
   busy.add(key);
   let r;
@@ -1763,7 +1965,7 @@ function doAdjust(uid, amount, sign, reason, doneLabel) {
   }
   if (!r.ok) {
     return { text: '❌ ' + r.reason, markup: kb([
-      [{ text: T.back, callback_data: 'admin:user:' + uid }]]) };
+      [{ text: T.back, callback_data: 'admin:back' }]]) };
   }
   return {
     text: '<b>' + (sign < 0 ? '➖' : '➕') + ' ثبت شد</b>\n' + LINE + '\n\n' +
@@ -1821,7 +2023,7 @@ function screenPricing() {
     rows.push([{ text: '✅ اعمال روی ' + fa(pend.length) + ' محصول',
                  callback_data: 'admin:pcapply', style: 'success' }]);
   }
-  rows.push([{ text: T.back, callback_data: 'admin' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -1871,7 +2073,7 @@ function screenPricingCat(cat) {
     { text: f.enabled ? '⛔️ خاموش' : '✅ روشن', callback_data: 'admin:pctog:' + c },
     { text: '↩️ پیش‌فرض', callback_data: 'admin:pcreset:' + c },
   ]);
-  rows.push([{ text: T.back, callback_data: 'admin:pricing' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -1910,7 +2112,7 @@ function screenPricingPreview() {
   }
   const rows = [];
   if (ch.length) rows.push([{ text: '✅ اعمال', callback_data: 'admin:pcapply', style: 'success' }]);
-  rows.push([{ text: T.back, callback_data: 'admin:pricing' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
 
@@ -1943,7 +2145,7 @@ function screenLedger() {
     }).join('\n\n');
   }
   return { text: text, markup: kb([
-    [{ text: T.back, callback_data: 'admin' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -1970,7 +2172,7 @@ function screenHelp() {
     '  node foxcoin.js set reportChatId <شناسه گروه>\n\n' +
     '<i>همه تغییرات کوین در دفتر کل ثبت می‌شود و قابل ردیابی است.</i>';
   return { text: text, markup: kb([
-    [{ text: T.back, callback_data: 'admin' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
   ]) };
 }
 
@@ -2024,159 +2226,172 @@ async function route(ctx) {
     return true;
   }
 
+  // ── بازگشت: یک پله عقب در مسیر واقعی همین ادمین
+  let d2 = d;
+  if (d === 'admin:back') {
+    d2 = navBack(ctx.uid);
+  } else if (isScreen(d)) {
+    navPush(ctx.uid, d);
+  }
+
   let s = null;
-  if (d === 'admin') s = screenMenu();
-  else if (d === 'admin:stats') s = screenStats();
-  else if (d === 'admin:settings') s = screenSettings();
-  else if (d === 'admin:products') s = screenProducts();
-  else if (d === 'admin:shopstatus') s = toggleShop();
-  else if (d === 'admin:padd') s = screenPickCat();
-  else if (d.startsWith('admin:paddman:')) s = screenManualPlan(ctx.uid, after(d, 'admin:paddman:'));
-  else if (d.startsWith(P.paddcat)) s = await screenPickPlan(ctx, after(d, P.paddcat));
-  else if (d.startsWith(P.paddplan)) {
+  if (d2 === 'admin') s = screenMenu();
+  else if (d2 === 'admin:stats') s = screenStats();
+  else if (d2 === 'admin:settings') s = screenSettings();
+  else if (d2 === 'admin:products') s = screenProducts();
+  else if (d2 === 'admin:shopstatus') s = toggleShop();
+  else if (d2 === 'admin:padd') s = screenPickCat();
+  else if (d2.startsWith('admin:paddman:')) s = screenManualPlan(ctx.uid, after(d2, 'admin:paddman:'));
+  else if (d2.startsWith(P.paddcat)) s = await screenPickPlan(ctx, after(d2, P.paddcat));
+  else if (d2.startsWith(P.paddplan)) {
     // نامحدود حجم ندارد: مرحله حجم رد می‌شود
-    const st = after(d, P.paddplan);
+    const st = after(d2, P.paddplan);
     s = coin.normCat(parseAddState(st).cat) === 'unlimited'
       ? screenAddDays(st) : screenAddGb(st);
   }
-  else if (d.startsWith(P.paddgb)) s = screenAddDays(after(d, P.paddgb));
-  else if (d.startsWith(P.padddays)) s = screenAddCoins(after(d, P.padddays));
-  else if (d.startsWith(P.paddcoins)) s = screenAddCoins(after(d, P.paddcoins));
-  else if (d.startsWith(P.paddgo)) s = await doAddProduct(ctx, after(d, P.paddgo));
-  else if (d.startsWith(P.pedit)) s = screenProductEdit(after(d, P.pedit));
-  else if (d.startsWith(P.pgb)) s = screenProductGb(after(d, P.pgb));
-  else if (d.startsWith(P.pgbv)) {
-    const [id, v] = after(d, P.pgbv).split(':');
+  else if (d2.startsWith(P.paddgb)) s = screenAddDays(after(d2, P.paddgb));
+  else if (d2.startsWith(P.padddays)) s = screenAddCoins(after(d2, P.padddays));
+  else if (d2.startsWith(P.paddcoins)) s = screenAddCoins(after(d2, P.paddcoins));
+  else if (d2.startsWith(P.paddgo)) s = await doAddProduct(ctx, after(d2, P.paddgo));
+  else if (d2.startsWith(P.pedit)) s = screenProductEdit(after(d2, P.pedit));
+  else if (d2.startsWith(P.pgb)) s = screenProductGb(after(d2, P.pgb));
+  else if (d2.startsWith(P.pgbv)) {
+    const [id, v] = after(d2, P.pgbv).split(':');
     s = applyNumField(id, 'gb', v);
-  } else if (d.startsWith(P.pdays)) s = screenProductDays(after(d, P.pdays));
-  else if (d.startsWith(P.pdaysv)) {
-    const [id, v] = after(d, P.pdaysv).split(':');
+  } else if (d2.startsWith(P.pdays)) s = screenProductDays(after(d2, P.pdays));
+  else if (d2.startsWith(P.pdaysv)) {
+    const [id, v] = after(d2, P.pdaysv).split(':');
     s = applyNumField(id, 'days', v);
-  } else if (d.startsWith(P.plabel)) s = await doAutoLabel(ctx, after(d, P.plabel));
-  else if (d.startsWith(P.pplan)) s = await screenPickProductPlan(ctx, after(d, P.pplan));
-  else if (d.startsWith(P.pplanpick)) {
-    const [id, pl] = after(d, P.pplanpick).split(':');
+  } else if (d2.startsWith(P.plabel)) s = await doAutoLabel(ctx, after(d2, P.plabel));
+  else if (d2.startsWith(P.pplan)) s = await screenPickProductPlan(ctx, after(d2, P.pplan));
+  else if (d2.startsWith(P.pplanpick)) {
+    const [id, pl] = after(d2, P.pplanpick).split(':');
     s = doChangePlan(id, pl);
-  } else if (d.startsWith(P.pcat)) s = await doToggleCat(ctx, after(d, P.pcat));
-  else if (d === 'admin:users') s = screenUsers();
-  else if (d === 'admin:allusers') s = screenAllUsers(0);
-  else if (d.startsWith(P.allusers)) s = screenAllUsers(Number(after(d, P.allusers)) || 0);
-  else if (d.startsWith(P.setbal)) {
-    const parts = after(d, P.setbal).split(':');
+  } else if (d2.startsWith(P.pcat)) s = await doToggleCat(ctx, after(d2, P.pcat));
+  else if (d2 === 'admin:users') s = screenUsers();
+  else if (d2 === 'admin:allusers') s = screenAllUsers(0);
+  else if (d2.startsWith(P.allusers)) s = screenAllUsers(Number(after(d2, P.allusers)) || 0);
+  else if (d2.startsWith(P.setbal)) {
+    const parts = after(d2, P.setbal).split(':');
     s = screenSetBal(parts[0], Number(parts[1]) || 0, parts[2] || 'other');
-  } else if (d.startsWith(P.setbalgo)) {
-    const parts = after(d, P.setbalgo).split(':');
+  } else if (d2.startsWith(P.setbalgo)) {
+    const parts = after(d2, P.setbalgo).split(':');
     s = doSetBal(parts[0], Number(parts[1]) || 0, parts[2] || 'other');
-  } else if (d === 'admin:hub') s = screenHub();
-  else if (d === 'admin:cap') s = screenCap();
-  else if (d.startsWith('admin:capv:')) s = applyCap(after(d, 'admin:capv:'));
-  else if (d.startsWith('admin:capset:')) s = setCap(after(d, 'admin:capset:'));
-  else if (d === 'admin:miss') s = screenMissions();
-  else if (d === 'admin:missnew') s = screenMissionNew();
-  else if (d.startsWith('admin:misstpl:')) s = createMissionFromTemplate(after(d, 'admin:misstpl:'));
-  else if (d.startsWith('admin:missed:')) s = screenMissionEdit(after(d, 'admin:missed:'));
-  else if (d.startsWith('admin:misscv:')) {
-    const [mi, mv] = after(d, 'admin:misscv:').split(':');
+  } else if (d2 === 'admin:hub') s = screenHub();
+  else if (d2 === 'admin:cap') s = screenCap();
+  else if (d2.startsWith('admin:capv:')) s = applyCap(after(d2, 'admin:capv:'));
+  else if (d2.startsWith('admin:capset:')) s = setCap(after(d2, 'admin:capset:'));
+  else if (d2 === 'admin:miss') s = screenMissions();
+  else if (d2 === 'admin:missnew') s = screenMissionNew();
+  else if (d2.startsWith('admin:misstpl:')) s = createMissionFromTemplate(after(d2, 'admin:misstpl:'), ctx.uid);
+  else if (d2.startsWith('admin:missed:')) s = screenMissionEdit(after(d2, 'admin:missed:'));
+  else if (d2.startsWith('admin:misscv:')) {
+    const [mi, mv] = after(d2, 'admin:misscv:').split(':');
     s = applyMissionNum(mi, 'coins', mv);
-  } else if (d.startsWith('admin:missnv:')) {
-    const [mi, mv] = after(d, 'admin:missnv:').split(':');
+  } else if (d2.startsWith('admin:missnv:')) {
+    const [mi, mv] = after(d2, 'admin:missnv:').split(':');
     s = applyMissionNum(mi, 'need', mv);
-  } else if (d.startsWith('admin:missc:')) s = screenMissionNum(after(d, 'admin:missc:'), 'coins');
-  else if (d.startsWith('admin:missn:')) s = screenMissionNum(after(d, 'admin:missn:'), 'need');
-  else if (d.startsWith('admin:misst:')) s = screenMissionTitle(ctx.uid, after(d, 'admin:misst:'));
-  else if (d.startsWith('admin:missr:')) s = toggleMissionRepeat(after(d, 'admin:missr:'));
-  else if (d.startsWith('admin:missa:')) s = toggleMissionActive(after(d, 'admin:missa:'));
-  else if (d.startsWith('admin:missdelgo:')) s = doDeleteMission(after(d, 'admin:missdelgo:'));
-  else if (d.startsWith('admin:missdel:')) s = confirmDeleteMission(after(d, 'admin:missdel:'));
-  else if (d === 'admin:rewards') s = screenRewards();
-  else if (d === 'admin:tier') s = screenTier();
-  else if (d === 'admin:tieradd') s = tierAdd();
-  else if (d === 'admin:tierdel') s = tierDel();
-  else if (d === 'admin:tiertog') s = tierToggle();
-  else if (d.startsWith('admin:tierv:')) {
-    const [ti, tv] = after(d, 'admin:tierv:').split(':');
+  } else if (d2.startsWith('admin:missc:')) s = screenMissionNum(after(d2, 'admin:missc:'), 'coins');
+  else if (d2.startsWith('admin:missn:')) s = screenMissionNum(after(d2, 'admin:missn:'), 'need');
+  else if (d2.startsWith('admin:misst:')) s = screenMissionTitle(ctx.uid, after(d2, 'admin:misst:'));
+  else if (d2.startsWith('admin:missr:')) s = toggleMissionRepeat(after(d2, 'admin:missr:'));
+  else if (d2.startsWith('admin:missa:')) s = toggleMissionActive(after(d2, 'admin:missa:'));
+  else if (d2.startsWith('admin:missdelgo:')) s = doDeleteMission(after(d2, 'admin:missdelgo:'));
+  else if (d2.startsWith('admin:missdel:')) s = confirmDeleteMission(after(d2, 'admin:missdel:'));
+  else if (d2 === 'admin:rewards') s = screenRewards();
+  else if (d2 === 'admin:tier') s = screenTier();
+  else if (d2 === 'admin:tieradd') s = tierAdd();
+  else if (d2 === 'admin:tierdel') s = tierDel();
+  else if (d2 === 'admin:tiertog') s = tierToggle();
+  else if (d2.startsWith('admin:tierv:')) {
+    const [ti, tv] = after(d2, 'admin:tierv:').split(':');
     s = tierAdjust(ti, tv);
-  } else if (d.startsWith('admin:tierr:')) {
-    s = tierRest(after(d, 'admin:tierr:'));
+  } else if (d2.startsWith('admin:tierr:')) {
+    s = tierRest(after(d2, 'admin:tierr:'));
   }
-  else if (d.startsWith(P.rcoins)) s = screenRewardEdit(after(d, P.rcoins));
-  else if (d.startsWith(P.rcoinsv)) {
-    const [k, v] = after(d, P.rcoinsv).split(':');
+  else if (d2.startsWith(P.rcoins)) s = screenRewardEdit(after(d2, P.rcoins));
+  else if (d2.startsWith(P.rcoinsv)) {
+    const [k, v] = after(d2, P.rcoinsv).split(':');
     s = applyReward(k, v);
-  } else if (d.startsWith(P.rmode)) s = toggleRewardMode(after(d, P.rmode));
-  else if (d.startsWith(P.rv)) {
-    const [k, v] = after(d, P.rv).split(':');
+  } else if (d2.startsWith(P.rmode)) s = toggleRewardMode(after(d2, P.rmode));
+  else if (d2.startsWith(P.rv)) {
+    const [k, v] = after(d2, P.rv).split(':');
     s = applyReward(k, v);
-  } else if (d.startsWith(P.rcap)) {
-    const [k, v] = after(d, P.rcap).split(':');
+  } else if (d2.startsWith(P.rcap)) {
+    const [k, v] = after(d2, P.rcap).split(':');
     s = applyRewardCap(k, v);
-  } else if (d.startsWith(P.rmin)) {
-    const [k, v] = after(d, P.rmin).split(':');
+  } else if (d2.startsWith(P.rmin)) {
+    const [k, v] = after(d2, P.rmin).split(':');
     s = applyRewardMin(k, v);
-  } else if (d.startsWith(P.rrep)) s = toggleRewardRepeat(after(d, P.rrep));
-  else if (d.startsWith(P.ren)) s = toggleRewardEnabled(after(d, P.ren));
-  else if (d.startsWith(P.rreset)) s = resetReward(after(d, P.rreset));
-  else if (d.startsWith(P.rdel)) s = deleteReward(after(d, P.rdel));
-  else if (d === 'admin:texts') s = screenTexts();
-  else if (d.startsWith(P.tedit)) s = screenTextEdit(ctx.uid, after(d, P.tedit));
-  else if (d.startsWith(P.treset)) s = resetTextScreen(after(d, P.treset));
-  else if (d === 'admin:tcancel') {
+  } else if (d2.startsWith(P.rrep)) s = toggleRewardRepeat(after(d2, P.rrep));
+  else if (d2.startsWith(P.ren)) s = toggleRewardEnabled(after(d2, P.ren));
+  else if (d2.startsWith(P.rreset)) s = resetReward(after(d2, P.rreset));
+  else if (d2.startsWith(P.rdel)) s = deleteReward(after(d2, P.rdel));
+  else if (d2 === 'admin:texts') s = screenTexts();
+  else if (d2.startsWith('admin:tcat:')) s = screenTextCat(after(d2, 'admin:tcat:'));
+  else if (d2 === 'admin:tresetall') s = resetAllTexts();
+  else if (d2.startsWith(P.tedit)) s = screenTextEdit(ctx.uid, after(d2, P.tedit));
+  else if (d2.startsWith(P.treset)) s = resetTextScreen(after(d2, P.treset));
+  else if (d2 === 'admin:tcancel') {
+    const p0 = pendingText(ctx.uid);
+    const cat = p0 && p0.key ? catOfKey(p0.key) : null;
     clearPending(ctx.uid);
-    s = screenTexts();
-  } else if (d === 'admin:pricing') s = screenPricing();
-  else if (d === 'admin:pcprev') s = screenPricingPreview();
-  else if (d === 'admin:pcapply') s = doApplyPricing();
-  else if (d === 'admin:ignore') s = null;
-  else if (d.startsWith(P.pcf)) s = screenPricingCat(after(d, P.pcf));
-  else if (d.startsWith(P.pctog)) s = togglePricing(after(d, P.pctog));
-  else if (d.startsWith(P.pcreset)) s = resetPricingCat(after(d, P.pcreset));
-  else if (d.startsWith(P.pcv)) {
-    const [pc, pf, pv] = after(d, P.pcv).split(':');
+    s = cat ? screenTextCat(cat) : screenTexts();
+  } else if (d2 === 'admin:pricing') s = screenPricing();
+  else if (d2 === 'admin:pcprev') s = screenPricingPreview();
+  else if (d2 === 'admin:pcapply') s = doApplyPricing();
+  else if (d2 === 'admin:ignore') s = null;
+  else if (d2.startsWith(P.pcf)) s = screenPricingCat(after(d2, P.pcf));
+  else if (d2.startsWith(P.pctog)) s = togglePricing(after(d2, P.pctog));
+  else if (d2.startsWith(P.pcreset)) s = resetPricingCat(after(d2, P.pcreset));
+  else if (d2.startsWith(P.pcv)) {
+    const [pc, pf, pv] = after(d2, P.pcv).split(':');
     s = applyPricingField(pc, pf, pv);
   }
-  else if (d === 'admin:ledger') s = screenLedger();
-  else if (d === 'admin:help') s = screenHelp();
-  else if (d.startsWith(P.set)) s = screenSetting(after(d, P.set));
-  else if (d.startsWith(P.setv)) {
-    const [k, v] = after(d, P.setv).split(':');
+  else if (d2 === 'admin:ledger') s = screenLedger();
+  else if (d2 === 'admin:help') s = screenHelp();
+  else if (d2.startsWith(P.set)) s = screenSetting(after(d2, P.set));
+  else if (d2.startsWith(P.setv)) {
+    const [k, v] = after(d2, P.setv).split(':');
     s = applySetting(k, v);
-  } else if (d.startsWith(P.toggle)) {
-    s = toggleSetting(after(d, P.toggle));
-  } else if (d.startsWith(P.reset)) {
-    s = resetSetting(after(d, P.reset));
-  } else if (d.startsWith(P.ptoggle)) {
-    s = toggleProduct(after(d, P.ptoggle));
-  } else if (d.startsWith(P.pdel)) {
-    s = confirmDeleteProduct(after(d, P.pdel));
-  } else if (d.startsWith(P.pdelgo)) {
-    s = doDeleteProduct(after(d, P.pdelgo));
-  } else if (d.startsWith(P.pcoins)) {
-    s = screenProductCoins(after(d, P.pcoins));
-  } else if (d.startsWith(P.pcoinsv)) {
-    const [id, v] = after(d, P.pcoinsv).split(':');
+  } else if (d2.startsWith(P.toggle)) {
+    s = toggleSetting(after(d2, P.toggle));
+  } else if (d2.startsWith(P.reset)) {
+    s = resetSetting(after(d2, P.reset));
+  } else if (d2.startsWith(P.ptoggle)) {
+    s = toggleProduct(after(d2, P.ptoggle));
+  } else if (d2.startsWith(P.pdel)) {
+    s = confirmDeleteProduct(after(d2, P.pdel));
+  } else if (d2.startsWith(P.pdelgo)) {
+    s = doDeleteProduct(after(d2, P.pdelgo));
+  } else if (d2.startsWith(P.pcoins)) {
+    s = screenProductCoins(after(d2, P.pcoins));
+  } else if (d2.startsWith(P.pcoinsv)) {
+    const [id, v] = after(d2, P.pcoinsv).split(':');
     s = applyProductCoins(id, v);
-  } else if (d.startsWith(P.user)) {
-    s = screenUser(after(d, P.user));
-  } else if (d.startsWith(P.uhist)) {
-    s = screenUserHistory(after(d, P.uhist));
-  } else if (d.startsWith(P.grant)) {
-    s = screenGrant(after(d, P.grant), 0, 'gift');
-  } else if (d.startsWith(P.grantv)) {
-    const [u, amt, r] = after(d, P.grantv).split(':');
+  } else if (d2.startsWith(P.user)) {
+    s = screenUser(after(d2, P.user));
+  } else if (d2.startsWith(P.uhist)) {
+    s = screenUserHistory(after(d2, P.uhist));
+  } else if (d2.startsWith(P.grant)) {
+    s = screenGrant(after(d2, P.grant), 0, 'gift');
+  } else if (d2.startsWith(P.grantv)) {
+    const [u, amt, r] = after(d2, P.grantv).split(':');
     s = screenGrant(u, amt, r);
-  } else if (d.startsWith(P.grantgo)) {
-    const [u, amt, r] = after(d, P.grantgo).split(':');
+  } else if (d2.startsWith(P.grantgo)) {
+    const [u, amt, r] = after(d2, P.grantgo).split(':');
     s = doGrant(u, amt, r);
-  } else if (d.startsWith(P.revoke)) {
-    s = screenRevoke(after(d, P.revoke), 0, 'balance');
-  } else if (d.startsWith(P.revokev)) {
-    const [u, amt, r] = after(d, P.revokev).split(':');
+  } else if (d2.startsWith(P.revoke)) {
+    s = screenRevoke(after(d2, P.revoke), 0, 'balance');
+  } else if (d2.startsWith(P.revokev)) {
+    const [u, amt, r] = after(d2, P.revokev).split(':');
     s = screenRevoke(u, amt, r);
-  } else if (d.startsWith(P.revokego)) {
-    const [u, amt, r] = after(d, P.revokego).split(':');
+  } else if (d2.startsWith(P.revokego)) {
+    const [u, amt, r] = after(d2, P.revokego).split(':');
     s = doRevoke(u, amt, r);
   } else {
     // مسیر ناشناخته در محدوده admin: منوی مدیریت
+    navStacks.set(String(ctx.uid), ['admin']);
     s = screenMenu();
   }
 
@@ -2589,9 +2804,16 @@ if (require.main === module) {
       // ── متن‌ها
       await go('admin:texts');
       a(sent.text.includes('متن‌هایی که کاربر'), 'صفحه متن‌ها باز شد');
-      a(JSON.stringify(sent.markup).includes('admin:tedit:menu_note') &&
-        JSON.stringify(sent.markup).includes('متن تشویقی'),
-        'دکمه ویرایش متن با برچسب درست هست');
+      a(JSON.stringify(sent.markup).includes('admin:tcat:guide') &&
+        JSON.stringify(sent.markup).includes('admin:tcat:earn'),
+        'متن‌ها به دو دسته تقسیم شد');
+      a(!JSON.stringify(sent.markup).includes('admin:tedit:'),
+        'فهرست بلند سیزده‌تایی از صفحه اول برداشته شد');
+      await go('admin:tcat:guide');
+      a(JSON.stringify(sent.markup).includes('admin:tedit:menu_note'),
+        'دکمه ویرایش داخل دسته هست');
+      a(sent.text.includes('تشویقی منو'), 'نام کوتاه در دسته آمد');
+      a(sent.text.includes('راهنما و منو'), 'عنوان دسته درست است');
       await go('admin:tedit:menu_note');
       a(sent.text.includes('متن جدید را همین‌جا بفرست'), 'حالت ویرایش متن باز شد');
       const pend = pendingText('u9');
@@ -2617,6 +2839,61 @@ if (require.main === module) {
       a(coin.getTexts().guide_what === coin.TEXTS.guide_what,
         'متن نامعتبر ذخیره نشد');
       await go('admin:tcancel');
+
+      // متن سفارشی: نشانه، بازگشت به دسته، ریست همگانی
+      await go('admin:tedit:menu_note');
+      await routeText({ uid: 'u9', config: { admins: ['u9'] }, text: 'سفارشی' });
+      await go('admin:texts');
+      a(sent.text.includes('🟢'), 'شمارش متن سفارشی در صفحه اول آمد');
+      a(JSON.stringify(sent.markup).includes('admin:tresetall'),
+        'دکمه ریست همگانی وقتی سفارشی هست ظاهر شد');
+      await go('admin:tcat:guide');
+      a(JSON.stringify(sent.markup).includes('admin:treset:menu_note'),
+        'دکمه ↩️ کنار متن سفارشی هست');
+      await go('admin:treset:menu_note');
+      a(sent.text.includes('راهنما و منو'), 'بعد از ریست به همان دسته برگشت');
+      await go('admin:tedit:guide_rules');
+      a(sent.text.includes('dailyCap'), 'راهنمای متغیر برای متن قوانین آمد');
+      await go('admin:tcancel');
+      a(sent.text.includes('راهنما و منو'), 'انصراف به همان دسته برگشت');
+      await go('admin:tedit:menu_note');
+      await routeText({ uid: 'u9', config: { admins: ['u9'] }, text: 'ب' });
+      await go('admin:tresetall');
+      a(coin.getTexts().menu_note === coin.TEXTS.menu_note,
+        'ریست همگانی همه را به پیش‌فرض برگرداند');
+      a(!JSON.stringify(sent.markup).includes('admin:tresetall'),
+        'وقتی همه پیش‌فرض‌اند دکمه ریست همگانی نیست');
+
+      // ── ناوبری: بازگشت باید به همان جایی برود که آمده‌ای
+      await go('admin'); await go('admin:hub'); await go('admin:tier');
+      await go('admin:back');
+      a(sent.text.includes('مرکز جوایز'),
+        'مرکز→پلکان→بازگشت به مرکز برمی‌گردد (باگ گزارش‌شده)');
+      await go('admin:back');
+      a(sent.text.includes('مدیریت فاکس کوین'), 'یک پله دیگر عقب: منوی اصلی');
+
+      await go('admin'); await go('admin:settings'); await go('admin:rewards');
+      await go('admin:tier');
+      await go('admin:back');
+      a(sent.text.includes('جوایز فعالیت'),
+        'همان صفحه از راه قدیمی به جوایز برمی‌گردد');
+      await go('admin:back');
+      a(sent.text.split('\n')[0].includes('تنظیمات'), 'و بعد به تنظیمات');
+
+      await go('admin'); await go('admin:hub'); await go('admin:miss');
+      await go('admin:missnew'); await go('admin:misstpl:d3');
+      await go('admin:back');
+      a(sent.text.includes('ماموریت‌ها') && !sent.text.includes('جدید'),
+        'بعد از ساخت ماموریت، بازگشت به فهرست می‌رود نه انتخابگر الگو');
+
+      for (let i = 0; i < 8; i++) { await go('admin:hub'); await go('admin:tier'); }
+      await go('admin:back'); await go('admin:back');
+      a(sent.text.includes('مدیریت فاکس کوین'),
+        'رفت‌وبرگشت پیاپی پشته را باد نمی‌کند');
+
+      await go('admin:xyz'); await go('admin:back');
+      a(sent.text.includes('مدیریت فاکس کوین'),
+        'بازگشت بعد از مسیر ناشناخته امن است');
 
       // ── دفتر کل و مسیر ناشناخته
       await go('admin:ledger');
