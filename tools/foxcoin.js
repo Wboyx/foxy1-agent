@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN — هسته اقتصاد کوین
- *  نسخه: 1.9.0 | 2026-08-23 | موتور جوایز + پلکان خرید + ماموریت‌ها
+ *  نسخه: 1.10.0 | 2026-08-23 | جوایز + پلکان + ماموریت + زیرمجموعه‌گیری
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا فایل جدا:
@@ -849,6 +849,252 @@ function claimMissionById(uid, id) {
   return Object.assign({}, r, { amount: m.coins, mission: m.id });
 }
 
+
+/**
+ * ── سیستم زیرمجموعه‌گیری (رفرال) ───────────────────────────
+ *
+ * طراحی بر پایه چیزی که در برنامه‌های موفق تکرار می‌شود:
+ *
+ * ۱. جایزه دوطرفه. اگر فقط دعوت‌کننده جایزه بگیرد، دعوت‌شده دلیلی
+ *    ندارد لینک را جدی بگیرد. وقتی هر دو چیزی می‌گیرند، دعوت از
+ *    «التماس» به «هدیه» تبدیل می‌شود.
+ * ۲. جایزه روی خرید واقعی، نه روی ثبت‌نام. ثبت‌نام رایگان است و
+ *    اکانت جعلی می‌آورد؛ خرید یعنی پول واقعی.
+ * ۳. پلکان خرید زیرمجموعه: خرید اول بیشتر، بعدی‌ها کمتر. همان
+ *    الگویی که ۳۰٪ ماه اول / ۲۰٪ ماه دوم / ۱۰٪ بعد را می‌سازد.
+ * ۴. پله‌های تعداد دعوت: با ۵ و ۱۰ و ۲۵ دعوتِ خریدار، جایزه یکجا.
+ *    این چیزی است که دعوت‌کننده معمولی را به دعوت‌کننده حرفه‌ای
+ *    تبدیل می‌کند.
+ * ۵. سقف، برای اینکه یک نفر کل بودجه را نبرد.
+ *
+ * ساختار ذخیره:
+ *   s.referrals[uid] = { by, at, purchases, earned }   ← رابطه
+ *   s.refConfig = { enabled, invitee, tiers, rest, milestones, cap }
+ */
+
+const REF_DEFAULTS = {
+  enabled: true,
+  invitee: 15,            // هدیه به دعوت‌شده (بعد از اولین خریدش)
+  tiers: [50, 30, 20],    // جایزه دعوت‌کننده: خرید اول/دوم/سوم زیرمجموعه
+  rest: 10,               // خریدهای بعدی؛ null یعنی تکرار آخرین پله
+  milestones: [           // پله تعدادی: با N زیرمجموعه خریدار
+    { need: 5,  coins: 100 },
+    { need: 10, coins: 250 },
+    { need: 25, coins: 700 },
+  ],
+  cap: 0,                 // سقف کل درآمد رفرال هر کاربر (۰ = بی‌نهایت)
+};
+
+function getRefConfig() {
+  const s = loadStore();
+  return Object.assign({}, REF_DEFAULTS, s.refConfig || {});
+}
+
+function setRefConfig(patch) {
+  const s = loadStore();
+  const cur = Object.assign({}, REF_DEFAULTS, s.refConfig || {});
+  const next = Object.assign({}, cur, patch || {});
+
+  next.enabled = next.enabled !== false;
+  next.invitee = Math.max(0, Math.floor(Number(next.invitee) || 0));
+  next.cap = Math.max(0, Math.floor(Number(next.cap) || 0));
+  next.tiers = (Array.isArray(next.tiers) ? next.tiers : [])
+    .slice(0, 10).map(x => Math.max(0, Math.floor(Number(x) || 0)));
+  next.rest = (next.rest === null || next.rest === undefined)
+    ? null : Math.max(0, Math.floor(Number(next.rest) || 0));
+  next.milestones = (Array.isArray(next.milestones) ? next.milestones : [])
+    .slice(0, 10)
+    .map(m => ({ need: Math.max(1, Math.floor(Number(m.need) || 1)),
+                 coins: Math.max(0, Math.floor(Number(m.coins) || 0)) }))
+    .sort((a, b) => a.need - b.need);
+
+  s.refConfig = next;
+  saveStore(s);
+  return next;
+}
+
+/** جایزه دعوت‌کننده بابت n اُمین خرید یک زیرمجموعه. */
+function refTierCoins(nth) {
+  const c = getRefConfig();
+  if (!c.enabled) return 0;
+  const i = Math.max(1, Math.floor(nth)) - 1;
+  if (i < c.tiers.length) return c.tiers[i];
+  if (c.rest !== null) return c.rest;
+  return c.tiers.length ? c.tiers[c.tiers.length - 1] : 0;
+}
+
+/**
+ * ثبت رابطه دعوت. یک‌بار و برای همیشه؛ اگر کاربر قبلاً دعوت‌کننده
+ * داشته باشد عوض نمی‌شود (وگرنه می‌شد لینک‌ها را جابه‌جا کرد).
+ */
+function setInviter(uid, inviterUid) {
+  uid = String(uid);
+  inviterUid = String(inviterUid);
+  if (!uid || !inviterUid) return { ok: false, reason: 'شناسه نامعتبر' };
+  if (uid === inviterUid) {
+    return { ok: false, reason: 'کاربر نمی‌تواند دعوت‌کننده خودش باشد' };
+  }
+  const s = loadStore();
+  s.referrals = s.referrals || {};
+  if (s.referrals[uid] && s.referrals[uid].by) {
+    return { ok: false, reason: 'قبلاً دعوت‌کننده دارد',
+             by: s.referrals[uid].by };
+  }
+  // حلقه: اگر دعوت‌کننده خودش زیرمجموعه این کاربر باشد
+  let cur = s.referrals[inviterUid] && s.referrals[inviterUid].by;
+  for (let i = 0; i < 20 && cur; i++) {
+    if (String(cur) === uid) {
+      return { ok: false, reason: 'حلقه دعوت مجاز نیست' };
+    }
+    cur = s.referrals[cur] && s.referrals[cur].by;
+  }
+  s.referrals[uid] = { by: inviterUid, at: Date.now(),
+                       purchases: 0, earned: 0 };
+  saveStore(s);
+  return { ok: true, by: inviterUid };
+}
+
+function getInviter(uid) {
+  const s = loadStore();
+  const r = (s.referrals || {})[String(uid)];
+  return r && r.by ? String(r.by) : null;
+}
+
+/** فهرست زیرمجموعه‌های مستقیم یک کاربر. */
+function listInvitees(uid) {
+  uid = String(uid);
+  const s = loadStore();
+  const out = [];
+  for (const [k, v] of Object.entries(s.referrals || {})) {
+    if (v && String(v.by) === uid) {
+      out.push({ uid: k, at: v.at || 0,
+                 purchases: v.purchases || 0, earned: v.earned || 0 });
+    }
+  }
+  return out.sort((a, b) => (b.earned || 0) - (a.earned || 0));
+}
+
+/** آمار رفرال یک کاربر — همان چیزی که در ربات نشان می‌دهیم. */
+function refStats(uid) {
+  const list = listInvitees(uid);
+  const buyers = list.filter(x => x.purchases > 0);
+  const earned = list.reduce((a, b) => a + (b.earned || 0), 0);
+  const c = getRefConfig();
+  let next = null;
+  for (const m of c.milestones) {
+    if (buyers.length < m.need) { next = m; break; }
+  }
+  return {
+    total: list.length,
+    buyers: buyers.length,
+    earned: earned,
+    next: next,
+    remaining: next ? next.need - buyers.length : 0,
+    list: list,
+  };
+}
+
+/**
+ * موتور اصلی: بعد از خرید واقعی کاربر صدا زده می‌شود.
+ * هم جایزه دعوت‌کننده را می‌دهد، هم هدیه دعوت‌شده را، هم پله‌های
+ * تعدادی را بررسی می‌کند.
+ */
+function onReferralPurchase(uid, amountToman, meta) {
+  uid = String(uid);
+  const c = getRefConfig();
+  const out = { inviter: null, invitee: null, milestone: null };
+  if (!c.enabled) return out;
+
+  const s = loadStore();
+  s.referrals = s.referrals || {};
+  const rel = s.referrals[uid];
+  if (!rel || !rel.by) return out;
+
+  const inviter = String(rel.by);
+  rel.purchases = (rel.purchases || 0) + 1;
+  const nth = rel.purchases;
+  saveStore(s);
+
+  // ۱) هدیه دعوت‌شده — فقط بعد از اولین خرید خودش
+  if (nth === 1 && c.invitee > 0) {
+    const r = addEvent(uid, 'referral', c.invitee,
+                       { action: 'invitee_bonus', inviter: inviter });
+    out.invitee = Object.assign({ amount: c.invitee }, r);
+  }
+
+  // ۲) جایزه دعوت‌کننده بابت این خرید
+  //
+  // ترتیب اینجا مهم است: اول addEvent، بعد loadStore. اگر برعکس
+  // باشد، نسخه‌ای که قبل از addEvent خوانده‌ایم موجودی تازه را
+  // ندارد و saveStore آن را پاک می‌کند. یک‌بار همین اتفاق افتاد و
+  // موجودی دعوت‌کننده صفر ماند با اینکه رویداد ثبت شده بود.
+  const coins = refTierCoins(nth);
+  if (coins > 0) {
+    const cap = c.cap;
+    const already = totalRefEarned(inviter);
+    const give = cap > 0 ? Math.max(0, Math.min(coins, cap - already)) : coins;
+    if (give > 0) {
+      const r = addEvent(inviter, 'referral', give,
+        { action: 'ref_purchase', invitee: uid, nth: nth,
+          amount: amountToman });
+      const s2 = loadStore();
+      s2.referrals = s2.referrals || {};
+      const rel2 = s2.referrals[uid] || {};
+      rel2.earned = (rel2.earned || 0) + give;
+      s2.referrals[uid] = rel2;
+      saveStore(s2);
+      out.inviter = Object.assign({ amount: give, nth: nth }, r);
+    } else {
+      out.inviter = { ok: false, reason: 'سقف درآمد رفرال پر شده' };
+    }
+  }
+
+  // ۳) پله تعدادی — وقتی این زیرمجموعه تازه «خریدار» شد
+  if (nth === 1) {
+    const st = refStats(inviter);
+    for (const m of c.milestones) {
+      if (st.buyers === m.need && m.coins > 0) {
+        const key = 'rm:' + inviter + ':' + m.need;
+        const s3 = loadStore();
+        if (!(s3.claimed || {})[key]) {
+          const r = addEvent(inviter, 'referral', m.coins,
+            { action: 'milestone', need: m.need });
+          const s4 = loadStore();          // بعد از addEvent، نه قبلش
+          s4.claimed = s4.claimed || {};
+          s4.claimed[key] = Date.now();
+          saveStore(s4);
+          out.milestone = Object.assign({ amount: m.coins, need: m.need }, r);
+        }
+        break;
+      }
+    }
+  }
+
+  return out;
+}
+
+/** مجموع کوینی که این کاربر تا حالا از رفرال گرفته. */
+function totalRefEarned(uid) {
+  return listInvitees(uid).reduce((a, b) => a + (b.earned || 0), 0);
+}
+
+/** جدول برترین دعوت‌کننده‌ها — برای رقابت و انگیزه. */
+function refLeaderboard(limit) {
+  const s = loadStore();
+  const agg = {};
+  for (const v of Object.values(s.referrals || {})) {
+    if (!v || !v.by) continue;
+    const k = String(v.by);
+    agg[k] = agg[k] || { uid: k, invites: 0, buyers: 0, earned: 0 };
+    agg[k].invites++;
+    if (v.purchases > 0) agg[k].buyers++;
+    agg[k].earned += v.earned || 0;
+  }
+  return Object.values(agg)
+    .sort((a, b) => b.earned - a.earned || b.buyers - a.buyers)
+    .slice(0, Math.max(1, Math.floor(limit || 10)));
+}
+
 function spendForPlan(uid, planId) {
   const price = getCoinPrice(planId);
   if (price === null) return { ok: false, reason: 'این محصول با کوین فروخته نمی‌شود' };
@@ -1324,6 +1570,41 @@ function selftest() {
     'a(!m.claimMissionById("u7","nope").ok,"ماموریت ناموجود رد شد");',
     'm.setMission({id:"q4",title:"موجودی",coins:5,kind:"balance",need:100000});',
     'a(m.missionProgress("u7",m.getMission("q4")).have===m.getBalance("u7"),"پیشرفت موجودی از تراز واقعی می‌آید");',
+    // ── زیرمجموعه‌گیری
+    'm.setSetting("dailyCap",0);',
+    'a(m.setInviter("rb","ra").ok,"رابطه دعوت ثبت شد");',
+    'a(!m.setInviter("rb","rc").ok,"دعوت‌کننده دوم رد شد");',
+    'a(!m.setInviter("ra","ra").ok,"دعوت خود رد شد");',
+    'a(!m.setInviter("ra","rb").ok,"حلقه دعوت رد شد");',
+    'a(m.getInviter("rb")==="ra","دعوت‌کننده خوانده شد");',
+    'const rp=m.onReferralPurchase("rb",100000);',
+    'a(rp.inviter&&rp.inviter.amount===50,"دعوت‌کننده پله اول ۵۰ گرفت");',
+    'a(rp.invitee&&rp.invitee.amount===15,"دعوت‌شده هدیه ۱۵ گرفت");',
+    'a(m.getBalance("ra")===50,"موجودی دعوت‌کننده ثبت شد");',
+    'a(m.getBalance("rb")===15,"موجودی دعوت‌شده ثبت شد");',
+    'a(m.onReferralPurchase("rb",50000).inviter.amount===30,"خرید دوم ۳۰");',
+    'a(m.onReferralPurchase("rb",50000).inviter.amount===20,"خرید سوم ۲۰");',
+    'a(m.onReferralPurchase("rb",50000).inviter.amount===10,"خرید چهارم rest=۱۰");',
+    'a(m.onReferralPurchase("rb",50000).invitee===null,"هدیه دعوت‌شده یک‌بار است");',
+    'for(const u of ["rc","rd","re","rf"]){m.setInviter(u,"ra");m.onReferralPurchase(u,50000);}',
+    'a(m.refStats("ra").buyers===5,"پنج زیرمجموعه خریدار شمرده شد");',
+    'a(m.history("ra").filter(e=>e.meta&&e.meta.action==="milestone").length===1,"پله پنج‌نفره یک‌بار جایزه داد");',
+    'a(m.refStats("ra").next.need===10,"پله بعدی ده نفر است");',
+    'a(m.refStats("ra").remaining===5,"پنج نفر تا پله بعدی مانده");',
+    'a(m.refLeaderboard(3)[0].uid==="ra","جدول برترین دعوت‌کننده‌ها درست است");',
+    'm.setRefConfig({enabled:false});',
+    'm.setInviter("rq","rp");',
+    'a(m.onReferralPurchase("rq",50000).inviter===null,"خاموش یعنی بی‌جایزه");',
+    'm.setRefConfig({enabled:true});',
+    'm.setRefConfig({cap:10});',
+    'm.setInviter("rz","ry"); m.onReferralPurchase("rz",50000);',
+    'a(m.getBalance("ry")<=10,"سقف درآمد رفرال رعایت شد");',
+    'm.setRefConfig({cap:0});',
+    'm.setSetting("dailyCap",60);',
+    'm.setInviter("rk2","rk"); m.onReferralPurchase("rk2",50000);',
+    'm.setInviter("rk3","rk"); m.onReferralPurchase("rk3",50000);',
+    'a(m.getBalance("rk")<=60,"سقف روزانه جلوی جایزه رفرال را هم می‌گیرد");',
+    'm.setSetting("dailyCap",200);',
     'console.log("\\nهمه تست‌ها گذشتند.");',
   ].join('\n');
   const f = path.join(tmp, 't.js');
@@ -1350,6 +1631,9 @@ module.exports = {
   addRewardAction, removeRewardAction, grantReward,
   onPurchase, rewardReferral, rewardRefPurchase,
   purchaseCount, getTiers, setTiers, tierCoinsFor,
+  REF_DEFAULTS, getRefConfig, setRefConfig, refTierCoins,
+  setInviter, getInviter, listInvitees, refStats,
+  onReferralPurchase, totalRefEarned, refLeaderboard,
   listMissions, getMission, setMission, removeMission,
   missionProgress, missionClaimed, claimMissionById, MISSION_KINDS,
   claimDaily, dailyStatus, coinsForPurchase,

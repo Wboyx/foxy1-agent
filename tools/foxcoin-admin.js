@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.9.2 | 2026-08-23 | مرکز جوایز + ماموریت‌ها + ناوبری + دکمه‌های تمیز
+ *  نسخه: 1.10.0 | 2026-08-23 | مرکز جوایز + ماموریت + زیرمجموعه‌گیری
  *  ۱.۶.۰: تشخیص نبود هوک getPlans + راه «افزودن دستی» محصول
  * ════════════════════════════════════════════════════════════════
  *
@@ -56,6 +56,33 @@ const T = {
 };
 
 /** برچسب فارسی هر متن سفارشی، برای پنل. */
+/** نام کوتاه فعالیت‌ها برای متن دکمه — نام کامل در متن پیام می‌آید. */
+/** نام کوتاه تنظیمات برای دکمه — نام کامل در متن پیام. */
+const SETTING_SHORT = {
+  enabled: 'فاکس کوین',
+  purchaseMode: 'نوع جایزه خرید',
+  purchaseFixed: 'کوین هر خرید',
+  purchasePerAmount: 'تومان به ازای کوین',
+  referralReward: 'جایزه دعوت',
+  signupReward: 'جایزه ثبت‌نام',
+  dailyCap: 'سقف روزانه',
+  shopEnabled: 'فروشگاه',
+  reportChatId: 'گروه گزارش',
+  reportEvents: 'رویدادهای گزارش',
+};
+
+const REWARD_SHORT = {
+  signup: 'ثبت‌نام',
+  signup_welcome: 'هدیه خوش‌آمد',
+  join: 'جوین کانال',
+  referral: 'دعوت دوستان',
+  mission: 'ماموریت',
+  purchase: 'خرید سرویس',
+  first_purchase: 'اولین خرید',
+  ref_purchase: 'خرید زیرمجموعه',
+  daily: 'حضور روزانه',
+};
+
 const TEXTS_FA = {
   menu_note: 'متن تشویقی منوی کوین',
   guide_what: 'متن «فاکس کوین چیست»',
@@ -120,6 +147,8 @@ const navStacks = new Map();
 const SCREEN_EXACT = new Set([
   'admin', 'admin:hub', 'admin:tier', 'admin:miss', 'admin:missnew',
   'admin:cap', 'admin:rewards', 'admin:settings', 'admin:texts',
+  'admin:ref', 'admin:reftiers', 'admin:refinv', 'admin:refms',
+  'admin:refcap', 'admin:reftop',
   'admin:products', 'admin:padd', 'admin:users', 'admin:allusers',
   'admin:pricing', 'admin:stats', 'admin:ledger', 'admin:help',
 ]);
@@ -146,6 +175,9 @@ const PARENT_EXACT = {
   'admin:hub': 'admin', 'admin:tier': 'admin:hub', 'admin:miss': 'admin:hub',
   'admin:missnew': 'admin:miss', 'admin:cap': 'admin:hub',
   'admin:rewards': 'admin:hub', 'admin:settings': 'admin',
+  'admin:ref': 'admin:hub', 'admin:reftiers': 'admin:ref',
+  'admin:refinv': 'admin:ref', 'admin:refms': 'admin:ref',
+  'admin:refcap': 'admin:ref', 'admin:reftop': 'admin:ref',
   'admin:texts': 'admin', 'admin:products': 'admin', 'admin:padd': 'admin:products',
   'admin:users': 'admin', 'admin:allusers': 'admin:users',
   'admin:pricing': 'admin', 'admin:stats': 'admin', 'admin:ledger': 'admin',
@@ -396,7 +428,7 @@ function screenMenu() {
     '🦊 کوین در گردش\n<code>' + fa(s.circulating) + '</code>\n\n' +
     '📊 مجموع رویدادها\n<code>' + fa(s.events) + '</code>\n\n' +
     '<i>هر تغییر با دکمه انجام می‌شود و در دفتر کل ثبت می‌شود.</i>\n\n' +
-    '<code>نسخه 1.9.2</code>';
+    '<code>نسخه 1.10.0</code>';
   return {
     text: text,
     markup: kb([
@@ -450,6 +482,7 @@ function screenSettings() {
   const rows = [];
   rows.push([{ text: T.rewards, callback_data: 'admin:rewards',
                style: 'success' }]);
+  let detail = '';
   for (const key of Object.keys(coin.DEFAULTS)) {
     if (HIDDEN_SETTINGS.includes(key)) continue;
     const label = SETTING_FA[key] || key;
@@ -463,18 +496,25 @@ function screenSettings() {
                                  : '💰 ثابت (هر خرید، X کوین)';
     }
     if (key === 'reportChatId' && !val) shown = '(تنظیم نشده)';
-    const line = { text: label + ' — ' + shown };
-    if (isNum || isBool) {
-      line.callback_data = 'admin:set:' + key;
-      line.text = label + '\n<code>' + shown + '</code>';
-    } else {
-      line.text = label + '\n<i>' + shown + '</i>';
-    }
+
+    // جزئیات در متن پیام می‌آید؛ روی دکمه فقط نام کوتاه و مقدار،
+    // وگرنه تلگرام دکمه را بعد از حدود ۳۰ نویسه می‌بُرد.
+    detail += (isBool ? (val ? '✅' : '⛔') : '▫️') + ' <b>' + label +
+              '</b>\n     <code>' + shown + '</code>\n';
+
+    const shortVal = isBool ? (val ? 'روشن' : 'خاموش')
+                            : (key === 'purchaseMode'
+                                ? (val === 'relative' ? 'نسبی' : 'ثابت')
+                                : shown);
+    const shortLab = SETTING_SHORT[key] || label;
+    const line = { text: shortLab + ' · ' + shortVal };
+    if (isNum || isBool) line.callback_data = 'admin:set:' + key;
+    else line.callback_data = 'admin:ignore';
     rows.push([line]);
   }
   rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   const text =
-    '<b>' + T.settings + '</b>\n' + LINE + '\n\n' +
+    '<b>' + T.settings + '</b>\n' + LINE + '\n\n' + detail + '\n' +
     '<i>روی هر آیتم بزنید تا ویرایش شود.\n' +
     'گروه گزارش و رویدادهای گزارش فقط از خط فرمان تغییر می‌کنند.\n' +
     'جوایز فعالیت (ثبت‌نام، جوین، دعوت، ماموریت) از «' + T.rewards +
@@ -490,6 +530,14 @@ function screenSettings() {
  * مقدارها از هسته زنده خوانده می‌شوند.
  */
 /** خلاصه یک‌خطی پیکربندی برای فهرست جوایز. */
+/** خلاصه کوتاه فقط برای متن دکمه — جزئیات (سقف/حداقل) در پیام می‌آید. */
+function rewardBrief(cfg) {
+  if (!cfg) return '';
+  if (cfg.mode === 'percent') return fa(cfg.percent) + '٪';
+  if (cfg.mode === 'per') return 'هر ' + fa(cfg.perAmount) + 'ت';
+  return fa(cfg.coins) + ' کوین';
+}
+
 function rewardSummary(cfg) {
   if (!cfg) return '';
   if (cfg.mode === 'percent') {
@@ -636,6 +684,7 @@ function screenHub() {
     [{ text: '🎁 هدیه خوش‌آمد', callback_data: 'admin:rcoins:signup' }],
     [{ text: '🪜 پلکان خرید', callback_data: 'admin:tier' }],
     [{ text: '🎯 ماموریت‌ها', callback_data: 'admin:miss' }],
+    [{ text: '👥 زیرمجموعه‌گیری', callback_data: 'admin:ref' }],
     [{ text: '🚦 سقف روزانه', callback_data: 'admin:cap' }],
     [{ text: '📋 همه جوایز فعالیت', callback_data: 'admin:rewards' }],
     [{ text: T.back, callback_data: 'admin:back' }],
@@ -870,34 +919,299 @@ function screenMissionTitle(uid, id) {
     markup: kb([[{ text: '🔙 انصراف', callback_data: 'admin:tcancel' }]]) };
 }
 
+
+// ── زیرمجموعه‌گیری (رفرال) ─────────────────────────────────
+
+function screenRef() {
+  const c = coin.getRefConfig();
+  const lb = coin.refLeaderboard(5);
+  const totalPaid = lb.reduce((a, b) => a + b.earned, 0);
+
+  let text = '<b>👥 زیرمجموعه‌گیری</b>\n' + LINE + '\n\n' +
+    (c.enabled ? '✅ <b>روشن</b>' : '⛔ <b>خاموش</b>') + '\n\n' +
+    '💰 <b>جایزه دعوت‌کننده</b>\n';
+  if (c.tiers.length) {
+    c.tiers.forEach((v, i) => {
+      text += '   خرید ' + fa(i + 1) + 'ام دوستش → <code>' + fa(v) + '</code>\n';
+    });
+    text += '   بقیه خریدها → <code>' +
+            (c.rest === null ? 'مثل آخری' : fa(c.rest)) + '</code>\n';
+  } else {
+    text += '   <i>پله‌ای تعریف نشده</i>\n';
+  }
+
+  text += '\n🎁 <b>هدیه دعوت‌شده</b> <code>' + fa(c.invitee) + '</code> کوین\n' +
+          '<i>بعد از اولین خریدش. این همان چیزی است که دعوت را از\n' +
+          '«التماس» به «هدیه» تبدیل می‌کند.</i>\n';
+
+  text += '\n🏆 <b>پله‌های تعدادی</b>\n';
+  if (c.milestones.length) {
+    for (const m of c.milestones) {
+      text += '   ' + fa(m.need) + ' دوستِ خریدار → <code>' +
+              fa(m.coins) + '</code> کوین یکجا\n';
+    }
+  } else {
+    text += '   <i>تعریف نشده</i>\n';
+  }
+
+  text += '\n🚦 سقف درآمد هر کاربر <code>' +
+          (c.cap > 0 ? fa(c.cap) : 'بی‌نهایت') + '</code>\n';
+
+  if (lb.length) {
+    text += '\n📊 <b>تا حالا</b>\n' +
+            '   ' + fa(lb.length) + ' دعوت‌کننده فعال · ' +
+            fa(totalPaid) + ' کوین پرداخت شده\n';
+  }
+
+  return { text: text, markup: kb([
+    [{ text: c.enabled ? '⛔ خاموش کن' : '✅ روشن کن',
+       callback_data: 'admin:reftog',
+       style: c.enabled ? 'danger' : 'success' }],
+    [{ text: '💰 پله‌های جایزه', callback_data: 'admin:reftiers' }],
+    [{ text: '🎁 هدیه دعوت‌شده', callback_data: 'admin:refinv' }],
+    [{ text: '🏆 پله‌های تعدادی', callback_data: 'admin:refms' }],
+    [{ text: '🚦 سقف درآمد', callback_data: 'admin:refcap' }],
+    [{ text: '📊 برترین دعوت‌کننده‌ها', callback_data: 'admin:reftop' }],
+    [{ text: T.back, callback_data: 'admin:back' }],
+  ]) };
+}
+
+function toggleRef() {
+  const c = coin.getRefConfig();
+  coin.setRefConfig({ enabled: !c.enabled });
+  return screenRef();
+}
+
+function screenRefTiers() {
+  const c = coin.getRefConfig();
+  let text = '<b>💰 پله‌های جایزه دعوت‌کننده</b>\n' + LINE + '\n\n' +
+    '<i>هر بار که زیرمجموعه‌ات خرید کند، تو کوین می‌گیری.\n' +
+    'خرید اولش بیشتر، بعدی‌ها کمتر — این کاری می‌کند که\n' +
+    'دعوت‌کننده دنبال آدم واقعی برود نه اکانت الکی.</i>\n\n';
+  const rows = [];
+  c.tiers.forEach((v, i) => {
+    text += '<b>خرید ' + fa(i + 1) + 'ام</b> → <code>' + fa(v) + '</code> کوین\n';
+    rows.push([
+      { text: 'خرید ' + fa(i + 1) + 'ام', callback_data: 'admin:ignore' },
+      { text: '➖۱۰', callback_data: 'admin:reftv:' + i + ':-10' },
+      { text: '➖۱', callback_data: 'admin:reftv:' + i + ':-1' },
+      { text: '➕۱', callback_data: 'admin:reftv:' + i + ':1' },
+      { text: '➕۱۰', callback_data: 'admin:reftv:' + i + ':10' },
+    ]);
+  });
+  text += '<b>بقیه</b> → <code>' +
+          (c.rest === null ? 'مثل آخری' : fa(c.rest)) + '</code>\n';
+  rows.push([
+    { text: 'بقیه', callback_data: 'admin:ignore' },
+    { text: '➖۱۰', callback_data: 'admin:refrv:-10' },
+    { text: '➖۱', callback_data: 'admin:refrv:-1' },
+    { text: '➕۱', callback_data: 'admin:refrv:1' },
+    { text: '➕۱۰', callback_data: 'admin:refrv:10' },
+  ]);
+  const add = [{ text: '➕ افزودن پله', callback_data: 'admin:reftadd' }];
+  if (c.tiers.length > 1) {
+    add.push({ text: '🗑 حذف آخری', callback_data: 'admin:reftdel' });
+  }
+  rows.push(add);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+function applyRefTier(i, delta) {
+  const c = coin.getRefConfig();
+  const t = c.tiers.slice();
+  i = Number(i);
+  if (t[i] === undefined) return screenRefTiers();
+  t[i] = Math.max(0, t[i] + Number(delta));
+  coin.setRefConfig({ tiers: t });
+  return screenRefTiers();
+}
+
+function applyRefRest(delta) {
+  const c = coin.getRefConfig();
+  const cur = c.rest === null ? 0 : c.rest;
+  coin.setRefConfig({ rest: Math.max(0, cur + Number(delta)) });
+  return screenRefTiers();
+}
+
+function addRefTier() {
+  const c = coin.getRefConfig();
+  if (c.tiers.length >= 10) return screenRefTiers();
+  const t = c.tiers.slice();
+  t.push(t.length ? Math.max(0, t[t.length - 1] - 10) : 50);
+  coin.setRefConfig({ tiers: t });
+  return screenRefTiers();
+}
+
+function delRefTier() {
+  const c = coin.getRefConfig();
+  if (c.tiers.length <= 1) return screenRefTiers();
+  coin.setRefConfig({ tiers: c.tiers.slice(0, -1) });
+  return screenRefTiers();
+}
+
+function screenRefInvitee() {
+  const c = coin.getRefConfig();
+  return { text:
+    '<b>🎁 هدیه دعوت‌شده</b>\n' + LINE + '\n\n' +
+    'کسی که با لینک دوستش آمده، بعد از <b>اولین خریدش</b>\n' +
+    '<code>' + fa(c.invitee) + '</code> کوین هدیه می‌گیرد.\n\n' +
+    '<i>چرا مهم است: اگر فقط دعوت‌کننده جایزه بگیرد، دوستش\n' +
+    'دلیلی ندارد لینک را جدی بگیرد. وقتی هر دو چیزی\n' +
+    'می‌گیرند، دعوت‌کننده احساس می‌کند دارد هدیه می‌دهد نه\n' +
+    'اینکه از دوستش سوءاستفاده کند.</i>\n\n' +
+    '<i>صفر یعنی خاموش.</i>',
+    markup: kb([
+      [{ text: '➖۱۰', callback_data: 'admin:refiv:-10' },
+       { text: '➖۵', callback_data: 'admin:refiv:-5' },
+       { text: '➕۵', callback_data: 'admin:refiv:5' },
+       { text: '➕۱۰', callback_data: 'admin:refiv:10' }],
+      [{ text: T.back, callback_data: 'admin:back' }],
+    ]) };
+}
+
+function applyRefInvitee(delta) {
+  const c = coin.getRefConfig();
+  coin.setRefConfig({ invitee: Math.max(0, c.invitee + Number(delta)) });
+  return screenRefInvitee();
+}
+
+function screenRefMilestones() {
+  const c = coin.getRefConfig();
+  let text = '<b>🏆 پله‌های تعدادی</b>\n' + LINE + '\n\n' +
+    '<i>وقتی کاربر N دوستِ خریدار آورد، یکجا جایزه می‌گیرد.\n' +
+    'این چیزی است که دعوت‌کننده معمولی را به دعوت‌کننده\n' +
+    'حرفه‌ای تبدیل می‌کند — چون هدف می‌بیند.</i>\n\n';
+  const rows = [];
+  c.milestones.forEach((m, i) => {
+    text += '🎯 <b>' + fa(m.need) + ' نفر</b> → <code>' + fa(m.coins) + '</code> کوین\n';
+    rows.push([
+      { text: fa(m.need) + ' نفر', callback_data: 'admin:ignore' },
+      { text: '➖۵۰', callback_data: 'admin:refmv:' + i + ':-50' },
+      { text: '➕۵۰', callback_data: 'admin:refmv:' + i + ':50' },
+      { text: '🗑', callback_data: 'admin:refmd:' + i },
+    ]);
+  });
+  if (!c.milestones.length) text += '<i>پله‌ای تعریف نشده.</i>\n';
+  rows.push([{ text: '➕ پله جدید', callback_data: 'admin:refmadd' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:back' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+function applyRefMilestone(i, delta) {
+  const c = coin.getRefConfig();
+  const ms = c.milestones.map(x => ({ need: x.need, coins: x.coins }));
+  i = Number(i);
+  if (!ms[i]) return screenRefMilestones();
+  ms[i].coins = Math.max(0, ms[i].coins + Number(delta));
+  coin.setRefConfig({ milestones: ms });
+  return screenRefMilestones();
+}
+
+function addRefMilestone() {
+  const c = coin.getRefConfig();
+  if (c.milestones.length >= 10) return screenRefMilestones();
+  const ms = c.milestones.map(x => ({ need: x.need, coins: x.coins }));
+  const last = ms.length ? ms[ms.length - 1] : { need: 0, coins: 50 };
+  ms.push({ need: last.need + 5, coins: last.coins + 100 });
+  coin.setRefConfig({ milestones: ms });
+  return screenRefMilestones();
+}
+
+function delRefMilestone(i) {
+  const c = coin.getRefConfig();
+  const ms = c.milestones.map(x => ({ need: x.need, coins: x.coins }));
+  ms.splice(Number(i), 1);
+  coin.setRefConfig({ milestones: ms });
+  return screenRefMilestones();
+}
+
+function screenRefCap() {
+  const c = coin.getRefConfig();
+  return { text:
+    '<b>🚦 سقف درآمد رفرال</b>\n' + LINE + '\n\n' +
+    'هر کاربر حداکثر <code>' +
+    (c.cap > 0 ? fa(c.cap) : 'بی‌نهایت') + '</code> کوین\n' +
+    'از زیرمجموعه‌گیری می‌تواند بگیرد.\n\n' +
+    '<i>این جلوی کسی را می‌گیرد که با صد اکانت الکی کل\n' +
+    'بودجه را ببرد. صفر یعنی بدون سقف.</i>',
+    markup: kb([
+      [{ text: '➖۵۰۰', callback_data: 'admin:refcv:-500' },
+       { text: '➖۱۰۰', callback_data: 'admin:refcv:-100' },
+       { text: '➕۱۰۰', callback_data: 'admin:refcv:100' },
+       { text: '➕۵۰۰', callback_data: 'admin:refcv:500' }],
+      [{ text: '♾ بدون سقف', callback_data: 'admin:refcv:reset' }],
+      [{ text: T.back, callback_data: 'admin:back' }],
+    ]) };
+}
+
+function applyRefCap(v) {
+  const c = coin.getRefConfig();
+  coin.setRefConfig({ cap: String(v) === 'reset'
+    ? 0 : Math.max(0, c.cap + Number(v)) });
+  return screenRefCap();
+}
+
+function screenRefTop() {
+  const top = coin.refLeaderboard(15);
+  let text = '<b>📊 برترین دعوت‌کننده‌ها</b>\n' + LINE + '\n\n';
+  if (!top.length) {
+    text += '<i>هنوز کسی زیرمجموعه‌ای نیاورده.</i>';
+  } else {
+    const medal = ['🥇', '🥈', '🥉'];
+    top.forEach((x, i) => {
+      text += (medal[i] || fa(i + 1) + '.') + ' <code>' + x.uid + '</code>\n' +
+              '     ' + fa(x.invites) + ' دعوت · ' + fa(x.buyers) +
+              ' خریدار · ' + fa(x.earned) + ' کوین\n';
+    });
+  }
+  return { text: text,
+           markup: kb([[{ text: T.back, callback_data: 'admin:back' }]]) };
+}
+
 function screenRewards() {
   const rw = coin.getRewards();
   const defKeys = Object.keys(coin.REWARD_DEFAULTS || {});
   const customKeys = Object.keys(rw).filter(k => !defKeys.includes(k));
-  let text = '<b>' + T.rewards + '</b>\n' + LINE + '\n\n' +
-             '<i>برای هر فعالیت، نوع و مقدار جایزه را تعیین کنید.\n' +
-             'روی هر آیتم بزنید تا ویرایش شود.</i>\n';
-  const rows = [];
   const t = coin.getTiers();
+
+  // باگ: همه‌چیز داخل متن دکمه بود و دکمه‌ها ۳۴ تا ۵۸ نویسه می‌شدند.
+  // تلگرام روی موبایل حدود ۳۰ نویسه جا می‌دهد و بقیه را می‌بُرد، پس
+  // «جوین کانال/گروه...» به «...وین کانال/گروه» تبدیل می‌شد.
+  // حالا جزئیات در متن پیام است و دکمه فقط نام کوتاه + مقدار.
+  let text = '<b>' + T.rewards + '</b>\n' + LINE + '\n\n';
+  const rows = [];
+
   rows.push([{ text: '🪜 پلکان خرید' +
-                     (t.enabled && t.tiers.length
-                       ? ' (' + t.tiers.map(fa).join('/') +
-                         (t.rest !== null ? '/' + fa(t.rest) : '') + ')'
-                       : ' — خاموش'),
+                     (t.enabled && t.tiers.length ? '' : ' — خاموش'),
                callback_data: 'admin:tier' }]);
+  if (t.enabled && t.tiers.length) {
+    text += '🪜 <b>پلکان خرید</b> روشن — <code>' +
+            t.tiers.map(fa).join(' / ') +
+            (t.rest !== null ? ' / ' + fa(t.rest) : '') + '</code>\n\n';
+  } else {
+    text += '🪜 <b>پلکان خرید</b> خاموش\n\n';
+  }
+
   for (const key of [...defKeys, ...customKeys]) {
     const cfg = rw[key];
-    // وقتی پلکان روشن است، این دو کلید دیگر اثری ندارند
     if (t.enabled && t.tiers.length &&
         (key === 'purchase' || key === 'first_purchase')) continue;
     const label = REWARD_LABELS[key] || key;
+    const short = REWARD_SHORT[key] || label;
     const custom = customKeys.includes(key) ? ' ⭐' : '';
-    const rep = cfg.repeat === 'always' ? '— هر بار' : '— یک‌بار';
-    const off = cfg.enabled ? '' : ' ⛔';
-    rows.push([{ text: label + custom + ' · ' + rewardSummary(cfg) +
-                 ' ' + rep + off,
+    const rep = cfg.repeat === 'always' ? 'هر بار' : 'یک‌بار';
+    const off = cfg.enabled ? '' : ' ⛔ خاموش';
+
+    text += (cfg.enabled ? '▫️' : '⛔') + ' <b>' + label + '</b>' + custom +
+            '\n     <code>' + rewardSummary(cfg) + '</code> · ' + rep + '\n';
+
+    rows.push([{ text: (cfg.enabled ? '' : '⛔ ') + short + custom +
+                       ' · ' + rewardBrief(cfg) + off,
                  callback_data: 'admin:rcoins:' + key }]);
   }
+
+  text += '\n<i>روی هر کدام بزن تا نوع و مقدارش را عوض کنی.</i>';
   rows.push([{ text: T.back, callback_data: 'admin:back' }]);
   return { text: text, markup: kb(rows) };
 }
@@ -991,7 +1305,7 @@ function screenRewardEdit(key) {
       callback_data: 'admin:ren:' + key },
   ]);
   if (!isCustom) {
-    rows.push([{ text: '↩️ پیش‌فرض: ' + rewardSummary(def),
+    rows.push([{ text: '↩️ پیش‌فرض (' + rewardBrief(def) + ')',
                  callback_data: 'admin:rreset:' + key }]);
   } else {
     rows.push([{ text: '🗑 حذف فعالیت', callback_data: 'admin:rdel:' + key,
@@ -2316,6 +2630,28 @@ async function route(ctx) {
     s = doSetBal(parts[0], Number(parts[1]) || 0, parts[2] || 'other');
   } else if (d2 === 'admin:hub') s = screenHub();
   else if (d2 === 'admin:cap') s = screenCap();
+  else if (d2 === 'admin:ref') s = screenRef();
+  else if (d2 === 'admin:reftog') s = toggleRef();
+  else if (d2 === 'admin:reftiers') s = screenRefTiers();
+  else if (d2 === 'admin:reftadd') s = addRefTier();
+  else if (d2 === 'admin:reftdel') s = delRefTier();
+  else if (d2.startsWith('admin:reftv:')) {
+    const [ri, rv] = after(d2, 'admin:reftv:').split(':');
+    s = applyRefTier(ri, rv);
+  }
+  else if (d2.startsWith('admin:refrv:')) s = applyRefRest(after(d2, 'admin:refrv:'));
+  else if (d2 === 'admin:refinv') s = screenRefInvitee();
+  else if (d2.startsWith('admin:refiv:')) s = applyRefInvitee(after(d2, 'admin:refiv:'));
+  else if (d2 === 'admin:refms') s = screenRefMilestones();
+  else if (d2 === 'admin:refmadd') s = addRefMilestone();
+  else if (d2.startsWith('admin:refmd:')) s = delRefMilestone(after(d2, 'admin:refmd:'));
+  else if (d2.startsWith('admin:refmv:')) {
+    const [mi, mv] = after(d2, 'admin:refmv:').split(':');
+    s = applyRefMilestone(mi, mv);
+  }
+  else if (d2 === 'admin:refcap') s = screenRefCap();
+  else if (d2.startsWith('admin:refcv:')) s = applyRefCap(after(d2, 'admin:refcv:'));
+  else if (d2 === 'admin:reftop') s = screenRefTop();
   else if (d2.startsWith('admin:capv:')) s = applyCap(after(d2, 'admin:capv:'));
   else if (d2.startsWith('admin:capset:')) s = setCap(after(d2, 'admin:capset:'));
   else if (d2 === 'admin:miss') s = screenMissions();
@@ -2778,8 +3114,15 @@ if (require.main === module) {
       a(sent.text.includes('جوایز') &&
         JSON.stringify(sent.markup).includes('جوین'),
         'صفحه جوایز باز شد');
-      a(JSON.stringify(sent.markup).includes('خرید زیرمجموعه‌ها'),
+      a(JSON.stringify(sent.markup).includes('admin:rcoins:ref_purchase'),
         'خرید زیرمجموعه در فهرست جوایز هست');
+      // نام کامل در متن پیام می‌آید، نام کوتاه روی دکمه
+      a(sent.text.includes('خرید زیرمجموعه‌ها'),
+        'نام کامل فعالیت در متن پیام هست');
+      for (const r of sent.markup.inline_keyboard) for (const b of r) {
+        a([...b.text].length <= 30,
+          'دکمه «' + b.text + '» کوتاه‌تر از ۳۰ نویسه است (بریده نمی‌شود)');
+      }
       a(JSON.stringify(sent.markup).includes('حضور روزانه'),
         'حضور روزانه در فهرست جوایز هست');
       await go('admin:rcoins:join');
@@ -2933,6 +3276,65 @@ if (require.main === module) {
       a(sent.text.includes('مدیریت فاکس کوین'),
         'بازگشت بعد از مسیر ناشناخته امن است');
 
+      // ── زیرمجموعه‌گیری
+      await go('admin:hub');
+      a(JSON.stringify(sent.markup).includes('admin:ref"'),
+        'زیرمجموعه‌گیری در مرکز جوایز هست');
+      await go('admin:ref');
+      a(sent.text.includes('زیرمجموعه‌گیری'), 'صفحه رفرال باز شد');
+      a(sent.text.includes('هدیه دعوت‌شده'), 'هدیه دوطرفه نشان داده می‌شود');
+
+      const rc0 = coin.getRefConfig();
+      await go('admin:reftog');
+      a(coin.getRefConfig().enabled !== rc0.enabled, 'روشن/خاموش کار کرد');
+      await go('admin:reftog');
+
+      await go('admin:reftiers');
+      a(sent.text.includes('پله'), 'صفحه پله‌های جایزه باز شد');
+      const rt0 = coin.getRefConfig().tiers[0];
+      await go('admin:reftv:0:10');
+      a(coin.getRefConfig().tiers[0] === rt0 + 10, 'پله اول زیاد شد');
+      await go('admin:reftv:0:-10');
+      const nT = coin.getRefConfig().tiers.length;
+      await go('admin:reftadd');
+      a(coin.getRefConfig().tiers.length === nT + 1, 'پله اضافه شد');
+      await go('admin:reftdel');
+      a(coin.getRefConfig().tiers.length === nT, 'پله حذف شد');
+      const rr0 = coin.getRefConfig().rest;
+      await go('admin:refrv:5');
+      a(coin.getRefConfig().rest === (rr0 === null ? 5 : rr0 + 5), 'بقیه زیاد شد');
+
+      await go('admin:refinv');
+      const ri0 = coin.getRefConfig().invitee;
+      await go('admin:refiv:5');
+      a(coin.getRefConfig().invitee === ri0 + 5, 'هدیه دعوت‌شده زیاد شد');
+      await go('admin:refiv:-5');
+
+      await go('admin:refms');
+      a(sent.text.includes('نفر'), 'صفحه پله‌های تعدادی باز شد');
+      const rm0 = coin.getRefConfig().milestones.length;
+      await go('admin:refmadd');
+      a(coin.getRefConfig().milestones.length === rm0 + 1, 'پله تعدادی اضافه شد');
+      await go('admin:refmv:0:50');
+      await go('admin:refmd:' + rm0);
+      a(coin.getRefConfig().milestones.length === rm0, 'پله تعدادی حذف شد');
+
+      await go('admin:refcap');
+      await go('admin:refcv:100');
+      a(coin.getRefConfig().cap === 100, 'سقف درآمد تنظیم شد');
+      await go('admin:refcv:reset');
+      a(coin.getRefConfig().cap === 0, 'بدون سقف شد');
+
+      await go('admin:reftop');
+      a(sent.text.includes('برترین'), 'جدول برترین‌ها باز شد');
+
+      // بازگشت از هر زیرصفحه رفرال باید به خود رفرال برگردد
+      await go('admin:hub'); await go('admin:ref'); await go('admin:reftiers');
+      await go('admin:back');
+      a(sent.text.includes('زیرمجموعه‌گیری'), 'بازگشت از پله‌ها به رفرال');
+      await go('admin:back');
+      a(sent.text.includes('مرکز جوایز'), 'بازگشت از رفرال به مرکز جوایز');
+
       // ── دکمه‌ها نباید HTML خام یا رقم لاتین نشان دهند
       // تلگرام داخل دکمه HTML رندر نمی‌کند؛ یک‌بار صفحه «جوایز
       // فعالیت» به شکل «ثبت‌نام <code>20</code> کوین» درآمد.
@@ -2944,6 +3346,14 @@ if (require.main === module) {
       a(kb([[{ text: 'یک\nدو' }]]).inline_keyboard[0][0].text === 'یک · دو',
         'خط دوم دکمه به نقطه‌وسط تبدیل شد');
       a(fa(1234) === '۱,۲۳۴', 'fa رقم فارسی با جداکننده می‌دهد');
+
+      // صفحه تنظیمات هم نباید دکمه بریده داشته باشد
+      await go('admin:settings');
+      for (const r of sent.markup.inline_keyboard) for (const b of r) {
+        a([...b.text].length <= 30,
+          'دکمه تنظیمات «' + b.text + '» بریده نمی‌شود');
+      }
+      a(sent.text.includes('سقف روزانه'), 'جزئیات تنظیمات در متن پیام است');
 
       await go('admin:rewards');
       for (const r of sent.markup.inline_keyboard) for (const b of r) {
