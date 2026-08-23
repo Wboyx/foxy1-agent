@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN — هسته اقتصاد کوین
- *  نسخه: 1.8.0 | 2026-08-22 | موتور جوایز پیشرفته (ثابت/درصدی/نسبی + سقف + زنجیره روزانه)
+ *  نسخه: 1.9.0 | 2026-08-23 | موتور جوایز + پلکان خرید + ماموریت‌ها
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا فایل جدا:
@@ -732,6 +732,123 @@ function clearManualPrice(id) {
   return p;
 }
 
+/**
+ * ── ماموریت‌ها ─────────────────────────────────────────────
+ * تا امروز دکمه «ماموریت‌ها» فقط «به‌زودی» می‌گفت. حالا ادمین
+ * ماموریت تعریف می‌کند و کاربر می‌گیرد.
+ *
+ * هر ماموریت:
+ *   id     شناسه یکتا
+ *   title  چیزی که کاربر می‌بیند
+ *   desc   توضیح کوتاه (اختیاری)
+ *   coins  جایزه
+ *   kind   نوع تحقق:
+ *            'manual'   کاربر خودش دکمه «انجام دادم» را می‌زند
+ *            'purchase' با رسیدن به N خرید باز می‌شود
+ *            'balance'  با رسیدن موجودی به N باز می‌شود
+ *            'daily'    با N روز پیاپی حضور باز می‌شود
+ *   need   عدد شرط (برای kindهای خودکار)
+ *   repeat 'once' یا 'always'
+ *   active فعال/غیرفعال
+ *
+ * چرا شرط‌ها از داده موجود خوانده می‌شوند: هیچ شمارنده جدیدی
+ * نمی‌سازیم. purchase از دفتر کل، balance از موجودی، daily از
+ * زنجیره روزانه — همان منابع حقیقتی که از قبل داریم.
+ */
+const MISSION_KINDS = ['manual', 'purchase', 'balance', 'daily'];
+
+function listMissions(includeOff) {
+  const s = loadStore();
+  const all = Object.values(s.missions || {});
+  const out = includeOff ? all : all.filter(m => m.active !== false);
+  return out.sort((a, b) => (a.coins || 0) - (b.coins || 0));
+}
+
+function getMission(id) {
+  const s = loadStore();
+  return (s.missions || {})[String(id)] || null;
+}
+
+function setMission(m) {
+  if (!m || !m.id) throw new Error('ماموریت باید شناسه داشته باشد');
+  const s = loadStore();
+  s.missions = s.missions || {};
+  const kind = MISSION_KINDS.includes(String(m.kind)) ? String(m.kind) : 'manual';
+  s.missions[String(m.id)] = {
+    id: String(m.id),
+    title: String(m.title || m.id).slice(0, 120),
+    desc: String(m.desc || '').slice(0, 300),
+    coins: Math.max(0, Math.round(Number(m.coins) || 0)),
+    kind: kind,
+    need: Math.max(0, Math.round(Number(m.need) || 0)),
+    repeat: m.repeat === 'always' ? 'always' : 'once',
+    active: m.active !== false,
+  };
+  saveStore(s);
+  return s.missions[String(m.id)];
+}
+
+function removeMission(id) {
+  const s = loadStore();
+  if (s.missions) delete s.missions[String(id)];
+  saveStore(s);
+  return true;
+}
+
+function missionClaimed(uid, id) {
+  const s = loadStore();
+  return !!(s.claimed || {})['m:' + String(uid) + ':' + String(id)];
+}
+
+/**
+ * پیشرفت کاربر روی یک ماموریت.
+ * خروجی: { done, have, need, claimed, claimable, reason }
+ */
+function missionProgress(uid, m) {
+  uid = String(uid);
+  const claimed = missionClaimed(uid, m.id);
+  let have = 0;
+  let need = Math.max(0, Number(m.need) || 0);
+
+  if (m.kind === 'purchase') have = purchaseCount(uid);
+  else if (m.kind === 'balance') have = getBalance(uid);
+  else if (m.kind === 'daily') have = (dailyStatus(uid) || {}).streak || 0;
+  else { have = 0; need = 0; }   // manual: شرط عددی ندارد
+
+  const done = m.kind === 'manual' ? true : have >= need;
+  const once = m.repeat !== 'always';
+  const claimable = m.active !== false && done && !(once && claimed);
+
+  let reason = '';
+  if (m.active === false) reason = 'غیرفعال';
+  else if (once && claimed) reason = 'قبلاً دریافت شده';
+  else if (!done) reason = 'هنوز کامل نشده';
+
+  return { done: done, have: have, need: need, claimed: claimed,
+           claimable: claimable, reason: reason };
+}
+
+/** دریافت جایزه یک ماموریت با همه بررسی‌ها. */
+function claimMissionById(uid, id) {
+  uid = String(uid);
+  const m = getMission(id);
+  if (!m) return { ok: false, reason: 'این ماموریت وجود ندارد' };
+  const pr = missionProgress(uid, m);
+  if (!pr.claimable) return { ok: false, reason: pr.reason || 'قابل دریافت نیست' };
+  if (m.coins <= 0) return { ok: false, reason: 'جایزه این ماموریت صفر است' };
+
+  const r = addEvent(uid, 'mission', m.coins, { mission: m.id, title: m.title });
+  if (!r.ok) return r;
+
+  if (m.repeat !== 'always') {
+    const s = loadStore();
+    s.claimed = s.claimed || {};
+    s.claimed['m:' + uid + ':' + m.id] = Date.now();
+    saveStore(s);
+  }
+  return Object.assign({}, r, { amount: m.coins, mission: m.id });
+}
+
 function spendForPlan(uid, planId) {
   const price = getCoinPrice(planId);
   if (price === null) return { ok: false, reason: 'این محصول با کوین فروخته نمی‌شود' };
@@ -1181,6 +1298,32 @@ function selftest() {
     'a(m.resetText("guide_what")===m.TEXTS.guide_what,"ریست صریح هم کار می‌کند");',
     'let badT=false; try{m.setText("guide_what","<b>بد</b>")}catch(e){badT=true} a(badT,"کاراکتر < رد شد");',
     'let badK=false; try{m.setText("nope","x")}catch(e){badK=true} a(badK,"کلید ناشناخته رد شد");',
+    // ── ماموریت‌ها
+    'm.setMission({id:"q1",title:"اولین خرید",coins:25,kind:"purchase",need:1});',
+    'm.setMission({id:"q2",title:"دستی",coins:10,kind:"manual"});',
+    'a(m.listMissions().length===2,"دو ماموریت ثبت شد");',
+    'a(m.listMissions()[0].id==="q2","مرتب‌سازی از کم‌جایزه به پرجایزه");',
+    'a(m.getMission("q1").repeat==="once","تکرار پیش‌فرض یک‌بار است");',
+    'a(m.getMission("q1").active===true,"ماموریت پیش‌فرض فعال است");',
+    'a(m.missionProgress("u7",m.getMission("q2")).claimable,"دستی بلافاصله قابل دریافت است");',
+    'a(!m.missionProgress("u7",m.getMission("q1")).claimable,"خرید نکرده پس قفل است");',
+    'a(m.missionProgress("u7",m.getMission("q1")).need===1,"شرط درست خوانده شد");',
+    'm.onPurchase("u7",{planId:"p1",price:1000});',
+    'a(m.missionProgress("u7",m.getMission("q1")).claimable,"بعد از خرید باز شد");',
+    'const cm=m.claimMissionById("u7","q1"); a(cm.ok&&cm.amount===25,"جایزه ماموریت داده شد");',
+    'a(!m.claimMissionById("u7","q1").ok,"ماموریت یک‌بارمصرف دوباره نمی‌دهد");',
+    'a(m.missionProgress("u7",m.getMission("q1")).claimed,"وضعیت دریافت‌شده ثبت شد");',
+    'm.setMission({id:"q3",title:"همیشگی",coins:5,kind:"manual",repeat:"always"});',
+    'a(m.claimMissionById("u7","q3").ok&&m.claimMissionById("u7","q3").ok,"همیشگی دوبار داد");',
+    'm.setMission({id:"q2",title:"دستی",coins:10,kind:"manual",active:false});',
+    'a(m.listMissions().length===2,"غیرفعال از فهرست کاربر حذف شد");',
+    'a(m.listMissions(true).length===3,"ولی در فهرست ادمین هست");',
+    'a(!m.claimMissionById("u7","q2").ok,"ماموریت غیرفعال جایزه نمی‌دهد");',
+    'a(m.removeMission("q3")===true,"ماموریت حذف شد");',
+    'a(m.getMission("q3")===null,"بعد از حذف پیدا نمی‌شود");',
+    'a(!m.claimMissionById("u7","nope").ok,"ماموریت ناموجود رد شد");',
+    'm.setMission({id:"q4",title:"موجودی",coins:5,kind:"balance",need:100000});',
+    'a(m.missionProgress("u7",m.getMission("q4")).have===m.getBalance("u7"),"پیشرفت موجودی از تراز واقعی می‌آید");',
     'console.log("\\nهمه تست‌ها گذشتند.");',
   ].join('\n');
   const f = path.join(tmp, 't.js');
@@ -1207,6 +1350,8 @@ module.exports = {
   addRewardAction, removeRewardAction, grantReward,
   onPurchase, rewardReferral, rewardRefPurchase,
   purchaseCount, getTiers, setTiers, tierCoinsFor,
+  listMissions, getMission, setMission, removeMission,
+  missionProgress, missionClaimed, claimMissionById, MISSION_KINDS,
   claimDaily, dailyStatus, coinsForPurchase,
   getTexts, setText, resetText, TEXTS,
   history, stats, readLedger, DEFAULTS, EVENTS, REWARD_DEFAULTS,

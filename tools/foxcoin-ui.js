@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN UI — رابط کاربری کوین
- *  نسخه: 1.5.1 | 2026-08-23 | فروشگاه + جوایز + روزانه + متن‌ها
+ *  نسخه: 1.6.0 | 2026-08-23 | فروشگاه + جوایز + روزانه + ماموریت‌ها
  *  ۱.۴.۱: محافظ هوک سرویس‌سازی — خرید به‌جای TypeError پیام روشن می‌دهد
  * ════════════════════════════════════════════════════════════════
  *
@@ -82,7 +82,7 @@ function screenMenu(uid) {
             '</code> کوین دیگر لازم دارید.\n\n')
       : '') +
     txt.menu_note + '\n\n' +
-    '<code>نسخه 1.5.1</code>';
+    '<code>نسخه 1.6.0</code>';
   return {
     text: text,
     markup: kb([
@@ -405,6 +405,70 @@ async function doPurchase(ctx, pid) {
   }
 }
 
+/**
+ * ── ماموریت‌های کاربر ──────────────────────────────────────
+ * قبلاً این صفحه فقط «به‌زودی» می‌گفت. حالا ماموریت‌های واقعی با
+ * نوار پیشرفت. ماموریت قفل هم نشان داده می‌شود تا کاربر بداند
+ * چه در انتظارش است — انگیزه می‌سازد.
+ */
+function bar(have, need) {
+  if (!need) return '';
+  const pct = Math.max(0, Math.min(1, have / need));
+  const full = Math.round(pct * 10);
+  return '▰'.repeat(full) + '▱'.repeat(10 - full) +
+         '  ' + fa(Math.min(have, need)) + '/' + fa(need);
+}
+
+function screenMissions(uid) {
+  const list = coin.listMissions();
+  const bal = coin.getBalance(uid);
+  let text = '<b>' + T.missions + '</b>\n' + LINE + '\n\n' +
+             '🦊 موجودی شما <code>' + fa(bal) + '</code> کوین\n\n';
+  if (!list.length) {
+    text += '📭 هنوز ماموریتی تعریف نشده است.\n' +
+            '<i>به‌زودی سر بزنید.</i>';
+    return { text: text, markup: kb([[{ text: T.back, callback_data: 'coin' }]]) };
+  }
+
+  const rows = [];
+  let ready = 0;
+  for (const m of list) {
+    const pr = coin.missionProgress(uid, m);
+    if (pr.claimable) ready++;
+    const icon = pr.claimable ? '🎁' : (pr.claimed ? '✅' : '🔒');
+    text += icon + ' <b>' + m.title + '</b> — <code>' + fa(m.coins) + '</code> کوین\n';
+    if (m.desc) text += '<i>' + m.desc + '</i>\n';
+    if (m.kind !== 'manual' && !pr.claimed) {
+      text += '<code>' + bar(pr.have, pr.need) + '</code>\n';
+    }
+    text += '\n';
+    if (pr.claimable) {
+      rows.push([{ text: '🎁 دریافت: ' + m.title + ' (+' + fa(m.coins) + ')',
+                   callback_data: 'coin:mgo:' + m.id, style: 'success' }]);
+    }
+  }
+  text += ready
+    ? '<b>' + fa(ready) + '</b> جایزه آماده دریافت است 👇'
+    : '<i>با فعالیت در ربات، ماموریت‌ها باز می‌شوند.</i>';
+  rows.push([{ text: T.back, callback_data: 'coin' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+function doClaimMission(uid, id) {
+  const r = coin.claimMissionById(uid, id);
+  if (!r.ok) {
+    return { text: '<b>دریافت نشد</b>\n\n' + (r.reason || 'خطای نامشخص'),
+             markup: kb([[{ text: T.missions, callback_data: 'coin:miss' }]]) };
+  }
+  return {
+    text: '<b>🎁 جایزه گرفتی</b>\n' + LINE + '\n\n' +
+          '<code>' + fa(r.amount) + '</code> کوین به حسابت اضافه شد.\n\n' +
+          '🦊 موجودی جدید <code>' + fa(r.balance) + '</code> کوین',
+    markup: kb([[{ text: T.missions, callback_data: 'coin:miss' }],
+                [{ text: T.back, callback_data: 'coin' }]]),
+  };
+}
+
 function screenSoon(title) {
   return {
     text: '<b>' + title + '</b>\n\n' + T.soon,
@@ -432,7 +496,8 @@ async function route(ctx) {
   else if (d === 'coin:shop') s = screenShop(ctx.uid);
   else if (d === 'coin:help') s = screenGuide(ctx.uid);
   else if (d === 'coin:daily') s = doDaily(ctx.uid);
-  else if (d === 'coin:miss') s = screenSoon(T.missions);
+  else if (d === 'coin:miss') s = screenMissions(ctx.uid);
+  else if (d.startsWith('coin:mgo:')) s = doClaimMission(ctx.uid, d.slice(9));
   else if (d.startsWith('coin:poor:')) s = screenPoor(ctx.uid, d.slice(10));
   else if (d.startsWith('coin:buy:')) s = screenConfirm(ctx.uid, d.slice(9));
   else if (d.startsWith('coin:go:')) s = await doPurchase(ctx, d.slice(8));
@@ -446,6 +511,7 @@ async function route(ctx) {
 const MENU_BUTTON = { text: T.title, callback_data: 'coin' };
 
 module.exports = { route, MENU_BUTTON, T, screenMenu, screenBalance,
+                   screenMissions, doClaimMission,
                    screenHistory, screenShop, screenConfirm,
                    screenGuide };
 
@@ -489,12 +555,64 @@ if (require.main === module) {
       return route({ data: 'other', uid: 'u9', editTelegram: fakeEdit });
     }).then(ok => {
       a(ok === false, 'رویداد بیگانه رد شد و به ربات واگذار شد');
+      return missionTests(a);
+    }).then(() => {
       return shopTests(a);
     }).then(() => {
       console.log('\nهمه تست‌ها گذشتند.');
     }).catch(e => { console.log('❌ ' + e.message); process.exit(1); });
 
-    async function shopTests(a) {
+    async function missionTests(a) {
+  const u = 'mu1';
+  coin.setMission({ id: 'x1', title: 'اولین خرید', coins: 25,
+                    kind: 'purchase', need: 1 });
+  coin.setMission({ id: 'x2', title: 'سلام کن', coins: 5, kind: 'manual' });
+
+  let sc = screenMissions(u);
+  a(sc.text.includes('اولین خرید'), 'ماموریت در فهرست کاربر دیده می‌شود');
+  a(sc.text.includes('🔒') || sc.text.includes('قفل'),
+    'ماموریت انجام‌نشده قفل نشان داده می‌شود');
+  a(JSON.stringify(sc.markup).includes('coin:mgo:x2'),
+    'ماموریت دستی دکمه دریافت دارد');
+  a(!JSON.stringify(sc.markup).includes('coin:mgo:x1'),
+    'ماموریت قفل دکمه دریافت ندارد');
+
+  coin.onPurchase(u, { planId: 'p1', price: 1000 });
+  sc = screenMissions(u);
+  a(JSON.stringify(sc.markup).includes('coin:mgo:x1'),
+    'بعد از خرید دکمه دریافت ظاهر شد');
+
+  const before = coin.getBalance(u);
+  const done = doClaimMission(u, 'x1');
+  a(coin.getBalance(u) === before + 25, 'کوین ماموریت به کاربر رسید');
+  a(done.text.includes('۲۵') || done.text.includes('25'),
+    'پیام دریافت مبلغ را نشان می‌دهد');
+
+  sc = screenMissions(u);
+  a(sc.text.includes('✅'), 'ماموریت دریافت‌شده تیک خورد');
+  a(!JSON.stringify(sc.markup).includes('coin:mgo:x1'),
+    'ماموریت دریافت‌شده دیگر دکمه ندارد');
+
+  const b2 = coin.getBalance(u);
+  doClaimMission(u, 'x1');
+  a(coin.getBalance(u) === b2, 'دریافت دوباره کوین نداد');
+
+  let sent = null;
+  const fakeEdit = async (c, ch, mid, text, markup) => { sent = { text, markup }; };
+  const ok = await route({ data: 'coin:miss', uid: u, config: {}, chatId: 1,
+                           messageId: 2, editTelegram: fakeEdit });
+  a(ok === true, 'مسیر ماموریت‌ها شناخته شد');
+  a(sent && !sent.text.includes('به‌زودی'),
+    'دیگر پیام «به‌زودی» نیست — ماموریت واقعی است');
+
+  coin.removeMission('x1');
+  coin.removeMission('x2');
+  a(screenMissions(u).text.includes('هنوز') ||
+    screenMissions(u).text.includes('📭'),
+    'فهرست خالی پیام درست دارد');
+}
+
+async function shopTests(a) {
       const fakePlans = async () => ([{ id: 'PL1', name: 'تست', panelId: 'PN1',
                                         days: 30, inbounds: [{ id: 7 }] }]);
       coin.addEvent('u9', 'admin', 500);
@@ -632,13 +750,13 @@ if (require.main === module) {
       coin.resetText('earn_join');
       coin.resetText('guide_rules');
       coin.resetText('menu_note');
-      a(screenMenu('u9').text.includes('نسخه 1.5.1'), 'نسخه جدید در منو نمایش داده شد');
+      a(screenMenu('u9').text.includes('نسخه 1.6.0'), 'نسخه جدید در منو نمایش داده شد');
 
       const mm = screenMenu('u9');
       a(mm.text.includes('راهنما') || JSON.stringify(mm.markup).includes('coin:help'),
         'دکمه راهنما در منو هست');
       a(mm.markup.inline_keyboard.length === 5, 'منو پنج ردیف شد');
-      a(mm.text.includes('نسخه 1.5.1'), 'نسخه جدید در منو نمایش داده شد');
+      a(mm.text.includes('نسخه 1.6.0'), 'نسخه جدید در منو نمایش داده شد');
 
       let hit = null;
       await route({ data: 'coin:help', uid: 'u9', config: {}, chatId: 1, messageId: 2,

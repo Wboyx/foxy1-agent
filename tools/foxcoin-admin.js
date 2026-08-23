@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.8.0 | 2026-08-23 | فاکس شاپ + موتور جوایز + متن‌ها
+ *  نسخه: 1.9.0 | 2026-08-23 | فاکس شاپ + مرکز جوایز + ماموریت‌ها
  *  ۱.۶.۰: تشخیص نبود هوک getPlans + راه «افزودن دستی» محصول
  * ════════════════════════════════════════════════════════════════
  *
@@ -46,6 +46,9 @@ const T = {
   prices: '🧮 فرمول قیمت',
   ledger: '📜 دفتر کل',
   rewards: '🎁 جوایز فعالیت',
+  hub: '🎁 مرکز جوایز',
+  missions: '🎯 ماموریت‌ها',
+  cap: '🚦 سقف روزانه',
   texts: '📝 متن‌ها',
   help: '❓ راهنما',
   back: '⬅️ بازگشت',
@@ -220,7 +223,7 @@ function screenMenu() {
     '🦊 کوین در گردش\n<code>' + fa(s.circulating) + '</code>\n\n' +
     '📊 مجموع رویدادها\n<code>' + fa(s.events) + '</code>\n\n' +
     '<i>هر تغییر با دکمه انجام می‌شود و در دفتر کل ثبت می‌شود.</i>\n\n' +
-    '<code>نسخه 1.8.0</code>';
+    '<code>نسخه 1.9.0</code>';
   return {
     text: text,
     markup: kb([
@@ -230,6 +233,7 @@ function screenMenu() {
        { text: T.users, callback_data: 'admin:users' }],
       [{ text: T.prices, callback_data: 'admin:pricing' },
        { text: T.ledger, callback_data: 'admin:ledger' }],
+      [{ text: T.hub, callback_data: 'admin:hub', style: 'success' }],
       [{ text: T.texts, callback_data: 'admin:texts' },
        { text: T.help, callback_data: 'admin:help', style: 'primary' }],
       [{ text: T.coinMenu, callback_data: 'coin' }],
@@ -424,6 +428,266 @@ function tierToggle() {
     coin.setTiers({ enabled: !t.enabled });
   }
   return screenTier();
+}
+
+
+/**
+ * ── مرکز جوایز ─────────────────────────────────────────────
+ * قبلاً «جوایز فعالیت» دو کلیک عمق داشت (تنظیمات ← جوایز) و
+ * پلکان سه کلیک. عملاً پیدا نمی‌شد. حالا همه‌چیزِ مربوط به
+ * جایزه یکجاست و از منوی اصلی یک کلیک فاصله دارد.
+ */
+function screenHub() {
+  const rw = coin.getRewards();
+  const t = coin.getTiers();
+  const c = coin.getSettings();
+  const ms = coin.listMissions(true);
+  const msOn = ms.filter(m => m.active !== false).length;
+
+  const signup = rw.signup ? rw.signup.coins : 0;
+  const text =
+    '<b>' + T.hub + '</b>\n' + LINE + '\n\n' +
+    '🎁 هدیه خوش‌آمد <code>' + fa(signup) + '</code> کوین\n' +
+    '🪜 پلکان خرید ' +
+      (t.enabled && t.tiers.length
+        ? '<code>' + t.tiers.map(fa).join(' / ') +
+          (t.rest !== null ? ' / ' + fa(t.rest) : '') + '</code>'
+        : '<i>خاموش</i>') + '\n' +
+    '🎯 ماموریت‌ها <code>' + fa(msOn) + '</code> فعال' +
+      (ms.length > msOn ? ' <i>(' + fa(ms.length - msOn) + ' خاموش)</i>' : '') + '\n' +
+    '🚦 سقف روزانه <code>' + fa(c.dailyCap) + '</code> کوین' +
+      (c.dailyCap > 0 ? '' : ' <i>(بی‌نهایت)</i>') + '\n\n' +
+    '<i>هرچه به جایزه مربوط است، همین‌جاست.</i>';
+
+  return { text: text, markup: kb([
+    [{ text: '🎁 هدیه خوش‌آمد', callback_data: 'admin:rcoins:signup' }],
+    [{ text: '🪜 پلکان خرید', callback_data: 'admin:tier' }],
+    [{ text: '🎯 ماموریت‌ها', callback_data: 'admin:miss' }],
+    [{ text: '🚦 سقف روزانه', callback_data: 'admin:cap' }],
+    [{ text: '📋 همه جوایز فعالیت', callback_data: 'admin:rewards' }],
+    [{ text: T.back, callback_data: 'admin' }],
+  ]) };
+}
+
+/** سقف روزانه: صفحه اختصاصی با پله‌های بزرگ. */
+function screenCap() {
+  const c = coin.getSettings();
+  const cap = Number(c.dailyCap) || 0;
+  const text =
+    '<b>' + T.cap + '</b>\n' + LINE + '\n\n' +
+    'هر کاربر در یک روز حداکثر\n' +
+    '<code>' + fa(cap) + '</code> کوین می‌تواند بگیرد.\n\n' +
+    (cap === 0
+      ? '<i>صفر یعنی بدون سقف — هر مقدار.</i>\n\n'
+      : '<i>بعد از این مقدار، جایزه‌ها تا فردا رد می‌شوند.</i>\n\n') +
+    '<i>خرید کاربر و اصلاح ادمین از سقف معاف‌اند.</i>';
+  return { text: text, markup: kb([
+    [{ text: '➖100', callback_data: 'admin:capv:-100' },
+     { text: '➖50', callback_data: 'admin:capv:-50' },
+     { text: '➕50', callback_data: 'admin:capv:50' },
+     { text: '➕100', callback_data: 'admin:capv:100' }],
+    [{ text: '➖1000', callback_data: 'admin:capv:-1000' },
+     { text: '➕1000', callback_data: 'admin:capv:1000' }],
+    [{ text: '♾ بدون سقف', callback_data: 'admin:capset:0' },
+     { text: '↩️ پیش‌فرض (۲۰۰)', callback_data: 'admin:capset:200' }],
+    [{ text: T.back, callback_data: 'admin:hub' }],
+  ]) };
+}
+
+function applyCap(delta) {
+  const cur = Number(coin.getSettings().dailyCap) || 0;
+  coin.setSetting('dailyCap', Math.max(0, cur + Number(delta)));
+  return screenCap();
+}
+
+function setCap(v) {
+  coin.setSetting('dailyCap', Math.max(0, Number(v) || 0));
+  return screenCap();
+}
+
+// ── ماموریت‌ها ─────────────────────────────────────────────
+
+const MISSION_KIND_FA = {
+  manual:   '✋ دستی (کاربر خودش می‌زند)',
+  purchase: '🛒 بعد از N خرید',
+  balance:  '💰 با رسیدن موجودی به N',
+  daily:    '📅 با N روز پیاپی',
+};
+
+function missionSummary(m) {
+  if (m.kind === 'manual') return 'دستی';
+  if (m.kind === 'purchase') return fa(m.need) + ' خرید';
+  if (m.kind === 'balance') return 'موجودی ' + fa(m.need);
+  if (m.kind === 'daily') return fa(m.need) + ' روز پیاپی';
+  return m.kind;
+}
+
+function screenMissions() {
+  const list = coin.listMissions(true);
+  let text = '<b>' + T.missions + '</b>\n' + LINE + '\n\n';
+  const rows = [];
+  if (!list.length) {
+    text += '📭 هنوز ماموریتی نساخته‌ای.\n\n' +
+            '<i>ماموریت یعنی کاری که کاربر انجام می‌دهد و کوین\n' +
+            'می‌گیرد — مثل «اولین خریدت را بکن» یا «سه روز\n' +
+            'پیاپی بیا».</i>';
+  } else {
+    text += '<i>' + fa(list.length) + ' ماموریت — روی هرکدام بزن</i>\n';
+    for (const m of list) {
+      rows.push([{ text: (m.active === false ? '⏸ ' : '🎯 ') + m.title +
+                         ' — ' + fa(m.coins) + ' کوین (' + missionSummary(m) + ')',
+                   callback_data: 'admin:missed:' + m.id }]);
+    }
+  }
+  rows.push([{ text: '➕ ماموریت جدید', callback_data: 'admin:missnew',
+               style: 'success' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:hub' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+/** ساخت ماموریت: از الگوهای آماده، بدون تایپ. */
+function screenMissionNew() {
+  return {
+    text: '<b>➕ ماموریت جدید</b>\n' + LINE + '\n\n' +
+          '<i>یک الگو انتخاب کن؛ بعد عنوان و جایزه‌اش را\n' +
+          'همین‌جا تنظیم می‌کنی.</i>',
+    markup: kb([
+      [{ text: '🛒 اولین خرید', callback_data: 'admin:misstpl:p1' }],
+      [{ text: '🛒 سه خرید', callback_data: 'admin:misstpl:p3' }],
+      [{ text: '📅 سه روز پیاپی', callback_data: 'admin:misstpl:d3' }],
+      [{ text: '📅 هفت روز پیاپی', callback_data: 'admin:misstpl:d7' }],
+      [{ text: '💰 رسیدن به ۱۰۰ کوین', callback_data: 'admin:misstpl:b100' }],
+      [{ text: '✋ ماموریت دستی', callback_data: 'admin:misstpl:man' }],
+      [{ text: T.back, callback_data: 'admin:miss' }],
+    ]),
+  };
+}
+
+const MISSION_TEMPLATES = {
+  p1:   { title: 'اولین خریدت را انجام بده', kind: 'purchase', need: 1, coins: 25 },
+  p3:   { title: 'سه خرید انجام بده', kind: 'purchase', need: 3, coins: 50 },
+  d3:   { title: 'سه روز پیاپی سر بزن', kind: 'daily', need: 3, coins: 15 },
+  d7:   { title: 'هفت روز پیاپی سر بزن', kind: 'daily', need: 7, coins: 40 },
+  b100: { title: 'موجودی‌ات را به ۱۰۰ کوین برسان', kind: 'balance', need: 100, coins: 20 },
+  man:  { title: 'ماموریت دستی', kind: 'manual', need: 0, coins: 10 },
+};
+
+function createMissionFromTemplate(key) {
+  const tpl = MISSION_TEMPLATES[String(key)];
+  if (!tpl) return screenMissionNew();
+  let id = 'M' + Date.now().toString(36).toUpperCase();
+  for (let i = 0; i < 5 && coin.getMission(id); i++) id += Math.floor(Math.random() * 10);
+  coin.setMission(Object.assign({ id: id, repeat: 'once', active: true }, tpl));
+  return screenMissionEdit(id);
+}
+
+function screenMissionEdit(id) {
+  const m = coin.getMission(id);
+  if (!m) return screenMissions();
+  const text =
+    '<b>🎯 ' + m.title + '</b>\n' + LINE + '\n\n' +
+    (m.desc ? '<i>' + m.desc + '</i>\n\n' : '') +
+    '💎 جایزه <code>' + fa(m.coins) + '</code> کوین\n' +
+    'نوع: ' + (MISSION_KIND_FA[m.kind] || m.kind) + '\n' +
+    (m.kind === 'manual' ? '' : '🎯 شرط <code>' + fa(m.need) + '</code>\n') +
+    'تکرار: ' + (m.repeat === 'always' ? '🔁 همیشگی' : '🔂 یک‌بار') + '\n' +
+    'وضعیت: ' + (m.active === false ? '⏸ غیرفعال' : '✅ فعال') + '\n\n' +
+    '<i>برای تغییر عنوان، دکمه «✏️ عنوان» را بزن.</i>';
+  const rows = [
+    [{ text: '💎 جایزه', callback_data: 'admin:missc:' + m.id }],
+  ];
+  if (m.kind !== 'manual') {
+    rows.push([{ text: '🎯 شرط', callback_data: 'admin:missn:' + m.id }]);
+  }
+  rows.push([{ text: '✏️ عنوان', callback_data: 'admin:misst:' + m.id }]);
+  rows.push([
+    { text: m.repeat === 'always' ? '🔂 یک‌بار کن' : '🔁 همیشگی کن',
+      callback_data: 'admin:missr:' + m.id },
+    { text: m.active === false ? '▶️ فعال' : '⏸ غیرفعال',
+      callback_data: 'admin:missa:' + m.id },
+  ]);
+  rows.push([{ text: '🗑 حذف', callback_data: 'admin:missdel:' + m.id }]);
+  rows.push([{ text: T.back, callback_data: 'admin:miss' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+function screenMissionNum(id, field) {
+  const m = coin.getMission(id);
+  if (!m) return screenMissions();
+  const isCoins = field === 'coins';
+  const cur = isCoins ? m.coins : m.need;
+  const title = isCoins ? '💎 جایزه ماموریت' : '🎯 شرط ماموریت';
+  const unit = isCoins ? 'کوین' : (m.kind === 'daily' ? 'روز' :
+                m.kind === 'purchase' ? 'خرید' : 'کوین موجودی');
+  const f = isCoins ? 'missc' : 'missn';
+  return { text:
+    '<b>' + title + '</b>\n' + LINE + '\n\n' +
+    m.title + '\n\n' +
+    'مقدار فعلی\n<code>' + fa(cur) + '</code> ' + unit + '\n\n' +
+    '<i>هر دکمه همان لحظه اعمال می‌شود.</i>',
+    markup: kb([
+      [{ text: '➖10', callback_data: 'admin:' + f + 'v:' + id + ':-10' },
+       { text: '➖1', callback_data: 'admin:' + f + 'v:' + id + ':-1' },
+       { text: '➕1', callback_data: 'admin:' + f + 'v:' + id + ':1' },
+       { text: '➕10', callback_data: 'admin:' + f + 'v:' + id + ':10' }],
+      [{ text: T.back, callback_data: 'admin:missed:' + id }],
+    ]) };
+}
+
+function applyMissionNum(id, field, delta) {
+  const m = coin.getMission(id);
+  if (!m) return screenMissions();
+  const next = Object.assign({}, m);
+  next[field] = Math.max(0, Number(m[field] || 0) + Number(delta));
+  coin.setMission(next);
+  return screenMissionEdit(id);
+}
+
+function toggleMissionRepeat(id) {
+  const m = coin.getMission(id);
+  if (m) coin.setMission(Object.assign({}, m,
+    { repeat: m.repeat === 'always' ? 'once' : 'always' }));
+  return screenMissionEdit(id);
+}
+
+function toggleMissionActive(id) {
+  const m = coin.getMission(id);
+  if (m) coin.setMission(Object.assign({}, m, { active: m.active === false }));
+  return screenMissionEdit(id);
+}
+
+function confirmDeleteMission(id) {
+  const m = coin.getMission(id);
+  if (!m) return screenMissions();
+  return { text: '<b>🗑 حذف ماموریت</b>\n' + LINE + '\n\n' +
+                 '«' + m.title + '» حذف شود؟\n\n' +
+                 '<i>این عمل برگشت‌پذیر نیست.</i>',
+    markup: kb([
+      [{ text: '✅ حذف', callback_data: 'admin:missdelgo:' + id, style: 'danger' }],
+      [{ text: '⬅️ انصراف', callback_data: 'admin:missed:' + id }],
+    ]) };
+}
+
+function doDeleteMission(id) {
+  coin.removeMission(id);
+  return screenMissions();
+}
+
+/** عنوان ماموریت را متنی می‌گیریم (همان سازوکار متن‌ها). */
+function screenMissionTitle(uid, id) {
+  const m = coin.getMission(id);
+  if (!m) return screenMissions();
+  pendingEdits.set(String(uid), {
+    kind: 'mission_title', missionId: String(id), at: Date.now(),
+    prompt: '✏️ عنوان تازه ماموریت را بفرست.\n' +
+            '<i>فعلی: ' + m.title + '</i>',
+  });
+  return { text: '<b>✏️ عنوان ماموریت</b>\n' + LINE + '\n\n' +
+                 'فعلی\n<i>' + m.title + '</i>\n\n' +
+                 '<b>عنوان تازه را همین‌جا بفرست.</b>\n\n' +
+                 '<i>بدون < یا >. اگر پیام «بفرست» نیامد، هوک\n' +
+                 'متن‌ها نصب نیست.</i>',
+    markup: kb([[{ text: '🔙 انصراف', callback_data: 'admin:tcancel' }]]) };
 }
 
 function screenRewards() {
@@ -713,6 +977,17 @@ async function routeText(ctx) {
   if (!pending) return false;
   const text = String(ctx && ctx.text || '').trim();
   if (!text || text === '/cancel') return false;
+
+  // عنوان ماموریت
+  if (pending.kind === 'mission_title') {
+    const title = text.replace(/[<>]/g, '').slice(0, 120);
+    if (!title) return false;
+    const m = coin.getMission(pending.missionId);
+    if (!m) { clearPending(uid); return false; }
+    coin.setMission(Object.assign({}, m, { title: title }));
+    clearPending(uid);
+    return true;
+  }
 
   // حالت افزودن دستی محصول: متن، شناسه پلن است نه متن نمایشی.
   if (pending.kind === 'plan') {
@@ -1792,7 +2067,28 @@ async function route(ctx) {
   } else if (d.startsWith(P.setbalgo)) {
     const parts = after(d, P.setbalgo).split(':');
     s = doSetBal(parts[0], Number(parts[1]) || 0, parts[2] || 'other');
-  } else if (d === 'admin:rewards') s = screenRewards();
+  } else if (d === 'admin:hub') s = screenHub();
+  else if (d === 'admin:cap') s = screenCap();
+  else if (d.startsWith('admin:capv:')) s = applyCap(after(d, 'admin:capv:'));
+  else if (d.startsWith('admin:capset:')) s = setCap(after(d, 'admin:capset:'));
+  else if (d === 'admin:miss') s = screenMissions();
+  else if (d === 'admin:missnew') s = screenMissionNew();
+  else if (d.startsWith('admin:misstpl:')) s = createMissionFromTemplate(after(d, 'admin:misstpl:'));
+  else if (d.startsWith('admin:missed:')) s = screenMissionEdit(after(d, 'admin:missed:'));
+  else if (d.startsWith('admin:misscv:')) {
+    const [mi, mv] = after(d, 'admin:misscv:').split(':');
+    s = applyMissionNum(mi, 'coins', mv);
+  } else if (d.startsWith('admin:missnv:')) {
+    const [mi, mv] = after(d, 'admin:missnv:').split(':');
+    s = applyMissionNum(mi, 'need', mv);
+  } else if (d.startsWith('admin:missc:')) s = screenMissionNum(after(d, 'admin:missc:'), 'coins');
+  else if (d.startsWith('admin:missn:')) s = screenMissionNum(after(d, 'admin:missn:'), 'need');
+  else if (d.startsWith('admin:misst:')) s = screenMissionTitle(ctx.uid, after(d, 'admin:misst:'));
+  else if (d.startsWith('admin:missr:')) s = toggleMissionRepeat(after(d, 'admin:missr:'));
+  else if (d.startsWith('admin:missa:')) s = toggleMissionActive(after(d, 'admin:missa:'));
+  else if (d.startsWith('admin:missdelgo:')) s = doDeleteMission(after(d, 'admin:missdelgo:'));
+  else if (d.startsWith('admin:missdel:')) s = confirmDeleteMission(after(d, 'admin:missdel:'));
+  else if (d === 'admin:rewards') s = screenRewards();
   else if (d === 'admin:tier') s = screenTier();
   else if (d === 'admin:tieradd') s = tierAdd();
   else if (d === 'admin:tierdel') s = tierDel();
@@ -2117,6 +2413,63 @@ if (require.main === module) {
       await go('admin:rewards');
       a(JSON.stringify(sent.markup).includes('admin:rcoins:purchase'),
         'با پلکان خاموش، «خرید سرویس» برگشت');
+
+      // ── مرکز جوایز
+      await go('admin:hub');
+      a(sent.text.includes('مرکز جوایز'), 'مرکز جوایز باز شد');
+      const hubK = JSON.stringify(sent.markup);
+      a(hubK.includes('admin:tier'), 'پلکان از مرکز یک کلیک است');
+      a(hubK.includes('admin:miss'), 'ماموریت‌ها در مرکز هست');
+      a(hubK.includes('admin:cap'), 'سقف روزانه در مرکز هست');
+      a(hubK.includes('admin:rcoins:signup'), 'هدیه خوش‌آمد در مرکز هست');
+      await go('admin');
+      a(JSON.stringify(sent.markup).includes('admin:hub'),
+        'مرکز جوایز از منوی اصلی پنل یک کلیک است');
+
+      // ── سقف روزانه
+      await go('admin:cap');
+      a(sent.text.includes('سقف'), 'صفحه سقف باز شد');
+      const cap0 = coin.getSettings().dailyCap;
+      await go('admin:capv:100');
+      a(coin.getSettings().dailyCap === cap0 + 100, 'سقف زیاد شد');
+      await go('admin:capv:-100');
+      a(coin.getSettings().dailyCap === cap0, 'سقف کم شد');
+      await go('admin:capset:0');
+      a(coin.getSettings().dailyCap === 0, 'بدون سقف شد');
+      await go('admin:capset:200');
+      a(coin.getSettings().dailyCap === 200, 'پیش‌فرض برگشت');
+
+      // ── ماموریت‌ها
+      await go('admin:miss');
+      a(sent.text.includes('ماموریت'), 'صفحه ماموریت‌ها باز شد');
+      await go('admin:missnew');
+      a(JSON.stringify(sent.markup).includes('misstpl'), 'الگوها نمایش داده شد');
+      await go('admin:misstpl:p1');
+      const mm = coin.listMissions(true)[0];
+      a(!!mm && mm.kind === 'purchase', 'ماموریت از الگو ساخته شد');
+      a(mm.need === 1 && mm.coins === 25, 'مقادیر الگو درست است');
+      await go('admin:misscv:' + mm.id + ':10');
+      a(coin.getMission(mm.id).coins === 35, 'جایزه ماموریت زیاد شد');
+      await go('admin:missnv:' + mm.id + ':1');
+      a(coin.getMission(mm.id).need === 2, 'شرط ماموریت زیاد شد');
+      await go('admin:missr:' + mm.id);
+      a(coin.getMission(mm.id).repeat === 'always', 'تکرار همیشگی شد');
+      await go('admin:missa:' + mm.id);
+      a(coin.getMission(mm.id).active === false, 'ماموریت غیرفعال شد');
+      await go('admin:missa:' + mm.id);
+      a(coin.getMission(mm.id).active === true, 'دوباره فعال شد');
+
+      // عنوان ماموریت از متن
+      await go('admin:misst:' + mm.id);
+      a(!!pendingText('u9'), 'حالت دریافت عنوان فعال شد');
+      a(await routeText({ uid: 'u9', config: { admins: ['u9'] },
+                          text: 'ماموریت تازه' }) === true, 'عنوان ذخیره شد');
+      a(coin.getMission(mm.id).title === 'ماموریت تازه', 'عنوان عوض شد');
+
+      await go('admin:missdel:' + mm.id);
+      a(sent.text.includes('حذف'), 'تأیید حذف آمد');
+      await go('admin:missdelgo:' + mm.id);
+      a(coin.getMission(mm.id) === null, 'ماموریت حذف شد');
 
       // ── کاربران و افزودن/کسر کوین
       await go('admin:users');
