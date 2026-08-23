@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN UI — رابط کاربری کوین
- *  نسخه: 1.6.0 | 2026-08-23 | فروشگاه + جوایز + روزانه + ماموریت‌ها
+ *  نسخه: 1.6.1 | 2026-08-23 | فروشگاه + جوایز + روزانه + ماموریت‌ها + ارقام فارسی
  *  ۱.۴.۱: محافظ هوک سرویس‌سازی — خرید به‌جای TypeError پیام روشن می‌دهد
  * ════════════════════════════════════════════════════════════════
  *
@@ -48,8 +48,17 @@ const EVENT_FA = {
   first_purchase: 'جایزه اولین خرید',
 };
 
+/**
+ * عدد فارسی با جداکننده هزارگان. اسم این تابع «فا» بود ولی خروجی
+ * لاتین می‌داد؛ در عکس پنل «20 کوین» کنار متن فارسی می‌نشست.
+ * چون هر عددِ نمایشی از همین‌جا رد می‌شود، یک اصلاح همه‌جا را
+ * فارسی می‌کند.
+ */
+const FA_DIGITS = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+
 function fa(n) {
-  return Number(n || 0).toLocaleString('en-US');
+  return Number(n || 0).toLocaleString('en-US')
+    .replace(/\d/g, d => FA_DIGITS[d]);
 }
 
 function when(ts) {
@@ -82,7 +91,7 @@ function screenMenu(uid) {
             '</code> کوین دیگر لازم دارید.\n\n')
       : '') +
     txt.menu_note + '\n\n' +
-    '<code>نسخه 1.6.0</code>';
+    '<code>نسخه 1.6.1</code>';
   return {
     text: text,
     markup: kb([
@@ -528,7 +537,9 @@ if (require.main === module) {
     coin.addEvent('u9', 'spend', -3);
 
     const m = screenMenu('u9');
-    a(m.text.includes('12'), 'موجودی در منو درست نمایش داده شد');
+    a(m.text.includes('۱۲'), 'موجودی در منو با رقم فارسی نمایش داده شد');
+    a(!/\d/.test(m.text.replace(/نسخه [\d.]+/g, '')),
+      'هیچ رقم لاتینی در منوی کاربر نمانده');
     a(m.markup.inline_keyboard.length === 5, 'منو پنج ردیف دارد');
     a(JSON.stringify(m.markup).includes('coin:daily'), 'دکمه جایزه روزانه هست');
     a(!JSON.stringify(m.markup).includes('coin:ref'), 'بخش دعوت حذف شد');
@@ -536,12 +547,12 @@ if (require.main === module) {
       'دکمه خرید سبز است');
 
     const b = screenBalance('u9');
-    a(b.text.includes('15'), 'مجموع دریافتی ۱۵ است');
-    a(b.text.includes('3'), 'مجموع خرج‌شده ۳ است');
+    a(b.text.includes('۱۵'), 'مجموع دریافتی ۱۵ است');
+    a(b.text.includes('۳'), 'مجموع خرج‌شده ۳ است');
 
     const h = screenHistory('u9');
     a(h.text.includes('جوین کانال'), 'نام رویداد جوین فارسی شد');
-    a(h.text.includes('+10'), 'علامت مثبت گذاشته شد');
+    a(h.text.includes('+۱۰'), 'علامت مثبت گذاشته شد');
 
     const empty = screenHistory('nobody');
     a(empty.text.includes('هنوز'), 'تاریخچه خالی پیام درست دارد');
@@ -630,7 +641,7 @@ async function shopTests(a) {
       a(JSON.stringify(sh.markup).includes('coin:poor:PBIG'), 'محصول گران قفل شد');
 
       const cf = screenConfirm('u9', 'P30');
-      a(cf.text.includes('30'), 'صفحه تأیید حجم را نشان داد');
+      a(cf.text.includes('۳۰'), 'صفحه تأیید حجم را نشان داد');
       a(JSON.stringify(cf.markup).includes('coin:go:P30'), 'دکمه تأیید درست است');
 
       // سناریوی حیاتی: ساخت سرویس شکست بخورد
@@ -694,25 +705,25 @@ async function shopTests(a) {
       coin.setReward('signup', 17);
       coin.setSetting('dailyCap', 333);
       let g = screenGuide('u9');
-      a(g.text.includes('25'), 'راهنما جایزه جوین را زنده خواند');
-      a(g.text.includes('17'), 'راهنما جایزه ثبت‌نام را زنده خواند');
-      a(g.text.includes('333'), 'راهنما سقف روزانه را زنده خواند');
+      a(g.text.includes('۲۵'), 'راهنما جایزه جوین را زنده خواند');
+      a(g.text.includes('۱۷'), 'راهنما جایزه ثبت‌نام را زنده خواند');
+      a(g.text.includes('۳۳۳'), 'راهنما سقف روزانه را زنده خواند');
       a(g.text.includes('سی گیگ'), 'راهنما محصولات واقعی را فهرست کرد');
       coin.setSetting('purchaseMode', 'relative');
       coin.setSetting('purchasePerAmount', 25000);
       g = screenGuide('u9');
-      a(g.text.includes('25,000'), 'راهنما حالت نسبی (هر ۲۵ هزار) را درست نوشت');
+      a(g.text.includes('۲۵,۰۰۰'), 'راهنما حالت نسبی (هر ۲۵ هزار) را درست نوشت');
       coin.setSetting('purchaseMode', 'fixed');
       g = screenGuide('u9');
       a(!g.text.includes('25,000'), 'راهنما با تغییر حالت به‌روز شد');
       coin.setRewardConfig('purchase', { mode: 'percent', percent: 3, cap: 50 });
       g = screenGuide('u9');
-      a(g.text.includes('3٪ از مبلغ خرید') && g.text.includes('حداکثر 50 کوین'),
+      a(g.text.includes('۳٪ از مبلغ خرید') && g.text.includes('حداکثر ۵۰ کوین'),
         'راهنما حالت درصدی خرید را نشان داد');
       coin.setRewardConfig('purchase', { mode: 'fixed', coins: 10 });
       coin.setRewardConfig('ref_purchase', { percent: 7 });
       g = screenGuide('u9');
-      a(g.text.includes('7٪ از مبلغ خرید') && g.text.includes('سقف 100 کوین'),
+      a(g.text.includes('۷٪ از مبلغ خرید') && g.text.includes('سقف ۱۰۰ کوین'),
         'راهنما جایزه خرید زیرمجموعه را نشان داد');
       coin.setRewardConfig('ref_purchase', { percent: 5 });
       a(JSON.stringify(g.markup).includes('coin:shop'), 'راهنما دکمه فروشگاه دارد');
@@ -722,7 +733,7 @@ async function shopTests(a) {
       let dd = null;
       await route({ data: 'coin:daily', uid: 'u9', config: {}, chatId: 1, messageId: 2,
                     editTelegram: async (c, ch, mi, t) => { dd = t; } });
-      a(dd && dd.includes('+7') && dd.includes('1') && dd.includes('زنجیره'),
+      a(dd && dd.includes('+۷') && dd.includes('۱') && dd.includes('زنجیره'),
         'جایزه روزانه روز اول داده شد');
       await route({ data: 'coin:daily', uid: 'u9', config: {}, chatId: 1, messageId: 2,
                     editTelegram: async (c, ch, mi, t) => { dd = t; } });
@@ -742,7 +753,7 @@ async function shopTests(a) {
       a(!g.text.includes('جوین کانال/گروه'), 'عنوان پیش‌فرض جوین حذف شد');
       coin.setText('guide_rules', 'سقف روزانه {dailyCap} کوین است');
       g = screenGuide('u9');
-      a(g.text.includes('سقف روزانه 333 کوین است'), 'جای‌نگهدار سقف روزانه پر شد');
+      a(g.text.includes('سقف روزانه ۳۳۳ کوین است'), 'جای‌نگهدار سقف روزانه پر شد');
       coin.setText('menu_note', 'متن منوی اختصاصی');
       const m3 = screenMenu('u9');
       a(m3.text.includes('متن منوی اختصاصی'), 'متن تشویقی منو سفارشی شد');
@@ -750,13 +761,13 @@ async function shopTests(a) {
       coin.resetText('earn_join');
       coin.resetText('guide_rules');
       coin.resetText('menu_note');
-      a(screenMenu('u9').text.includes('نسخه 1.6.0'), 'نسخه جدید در منو نمایش داده شد');
+      a(screenMenu('u9').text.includes('نسخه 1.6.1'), 'نسخه جدید در منو نمایش داده شد');
 
       const mm = screenMenu('u9');
       a(mm.text.includes('راهنما') || JSON.stringify(mm.markup).includes('coin:help'),
         'دکمه راهنما در منو هست');
       a(mm.markup.inline_keyboard.length === 5, 'منو پنج ردیف شد');
-      a(mm.text.includes('نسخه 1.6.0'), 'نسخه جدید در منو نمایش داده شد');
+      a(mm.text.includes('نسخه 1.6.1'), 'نسخه جدید در منو نمایش داده شد');
 
       let hit = null;
       await route({ data: 'coin:help', uid: 'u9', config: {}, chatId: 1, messageId: 2,

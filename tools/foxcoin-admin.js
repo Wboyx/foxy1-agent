@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.9.1 | 2026-08-23 | مرکز جوایز + ماموریت‌ها + ناوبری مسیرمحور
+ *  نسخه: 1.9.2 | 2026-08-23 | مرکز جوایز + ماموریت‌ها + ناوبری + دکمه‌های تمیز
  *  ۱.۶.۰: تشخیص نبود هوک getPlans + راه «افزودن دستی» محصول
  * ════════════════════════════════════════════════════════════════
  *
@@ -304,8 +304,17 @@ const SETTING_FA = {
   reportEvents: 'رویدادهای گزارش',
 };
 
+/**
+ * عدد فارسی با جداکننده هزارگان. اسم این تابع «فا» بود ولی خروجی
+ * لاتین می‌داد؛ در عکس پنل «20 کوین» کنار متن فارسی می‌نشست.
+ * چون هر عددِ نمایشی از همین‌جا رد می‌شود، یک اصلاح همه‌جا را
+ * فارسی می‌کند.
+ */
+const FA_DIGITS = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+
 function fa(n) {
-  return Number(n || 0).toLocaleString('en-US');
+  return Number(n || 0).toLocaleString('en-US')
+    .replace(/\d/g, d => FA_DIGITS[d]);
 }
 
 function when(ts) {
@@ -315,10 +324,37 @@ function when(ts) {
          p(d.getHours()) + ':' + p(d.getMinutes());
 }
 
+/**
+ * متن دکمه: تلگرام داخل دکمه HTML رندر نمی‌کند و parse_mode را
+ * نادیده می‌گیرد، پس <code> عیناً چاپ می‌شود. یک‌بار در صفحه
+ * «جوایز فعالیت» همین اتفاق افتاد و دکمه‌ها به شکل
+ * «ثبت‌نام <code>20</code> کوین» درآمدند.
+ *
+ * چون هر دکمه از kb() رد می‌شود، پاک‌سازی را همین‌جا می‌گذاریم تا
+ * دیگر هیچ صفحه‌ای نتواند این اشتباه را تکرار کند. خط دوم دکمه هم
+ * در تلگرام دیده نمی‌شود؛ به « · » تبدیل می‌شود تا متن گم نشود.
+ */
+function btnText(s) {
+  return String(s == null ? '' : s)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')          // هر تگ HTML
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .split('\n').map(x => x.trim()).filter(Boolean).join(' · ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function kb(rows) {
   // ردیف خالی را تلگرام رد می‌کند (Bad Request). صفحه‌هایی که
   // دکمه‌شان شرطی است ردیف خالی می‌سازند؛ همین‌جا پاک می‌شود.
-  return { inline_keyboard: (rows || []).filter(r => r && r.length) };
+  return {
+    inline_keyboard: (rows || [])
+      .filter(r => r && r.length)
+      .map(r => r.map(b => (b && typeof b.text === 'string')
+        ? Object.assign({}, b, { text: btnText(b.text) })
+        : b)),
+  };
 }
 
 function esc(s) {
@@ -360,7 +396,7 @@ function screenMenu() {
     '🦊 کوین در گردش\n<code>' + fa(s.circulating) + '</code>\n\n' +
     '📊 مجموع رویدادها\n<code>' + fa(s.events) + '</code>\n\n' +
     '<i>هر تغییر با دکمه انجام می‌شود و در دفتر کل ثبت می‌شود.</i>\n\n' +
-    '<code>نسخه 1.9.1</code>';
+    '<code>نسخه 1.9.2</code>';
   return {
     text: text,
     markup: kb([
@@ -420,7 +456,7 @@ function screenSettings() {
     const val = c[key];
     const isNum = typeof val === 'number';
     const isBool = typeof val === 'boolean';
-    let shown = esc(val);
+    let shown = isNum ? fa(val) : esc(val);
     if (isBool) shown = val ? '✅ روشن' : '⛔ خاموش';
     if (key === 'purchaseMode') {
       shown = val === 'relative' ? '📈 نسبی (هر X تومان، ۱ کوین)'
@@ -858,8 +894,8 @@ function screenRewards() {
     const custom = customKeys.includes(key) ? ' ⭐' : '';
     const rep = cfg.repeat === 'always' ? '— هر بار' : '— یک‌بار';
     const off = cfg.enabled ? '' : ' ⛔';
-    rows.push([{ text: label + custom + '\n<code>' + rewardSummary(cfg) +
-                '</code> ' + rep + off,
+    rows.push([{ text: label + custom + ' · ' + rewardSummary(cfg) +
+                 ' ' + rep + off,
                  callback_data: 'admin:rcoins:' + key }]);
   }
   rows.push([{ text: T.back, callback_data: 'admin:back' }]);
@@ -1391,7 +1427,7 @@ async function screenPickProductPlan(ctx, id) {
              markup: kb([[{ text: T.back, callback_data: 'admin:back' }]]) };
   }
   const rows = plans.map(pl => ([
-    { text: (pl.name || pl.id) + '  <code>' + pl.id + '</code>',
+    { text: (pl.name || pl.id) + ' · ' + pl.id,
       callback_data: 'admin:pplanpick:' + id + ':' + pl.id },
   ]));
   rows.push([{ text: T.back, callback_data: 'admin:back' }]);
@@ -1525,7 +1561,7 @@ async function screenPickPlan(ctx, cat) {
              markup: kb([[{ text: T.back, callback_data: 'admin:back' }]]) };
   }
   const rows = plans.map(pl => ([
-    { text: (pl.name || pl.id) + '  <code>' + pl.id + '</code>',
+    { text: (pl.name || pl.id) + ' · ' + pl.id,
       callback_data: 'admin:paddplan:' + cat + ':' + pl.id },
   ]));
   rows.push([{ text: T.back, callback_data: 'admin:back' }]);
@@ -1754,7 +1790,8 @@ function screenAllUsers(page) {
   ]));
   const nav = [];
   if (p > 0) nav.push({ text: '⬅️ قبلی', callback_data: 'admin:allusers:' + (p - 1) });
-  nav.push({ text: (p + 1) + ' / ' + pages, callback_data: 'admin:allusers:' + p });
+  nav.push({ text: fa(p + 1) + ' / ' + fa(pages),
+             callback_data: 'admin:allusers:' + p });
   if (p < pages - 1) nav.push({ text: '➡️ بعدی', callback_data: 'admin:allusers:' + (p + 1) });
   rows.push(nav);
   rows.push([{ text: T.back, callback_data: 'admin:back' }]);
@@ -2518,19 +2555,20 @@ if (require.main === module) {
       await go('admin:padddays:volume:PL1:40:45:100');
       a(sent.text.includes('کوین'), 'مرحله قیمت باز شد');
       await go('admin:paddcoins:volume:PL1:40:45:150');
-      a(sent.text.includes('PL1') && sent.text.includes('150'),
-        'خلاصه پیش از ثبت نمایش داده شد');
+      a(sent.text.includes('PL1') && sent.text.includes('۱۵۰'),
+        'خلاصه پیش از ثبت با رقم فارسی نمایش داده شد');
       await go('admin:paddgo:volume:PL1:40:45:150', null, { getPlans: getPlans });
       const np = coin.listProducts().find(x => x.planId === 'PL1' && x.gb === 40);
       a(!!np, 'محصول جدید ساخته شد');
-      a(np.label.includes('نقره‌ای') && np.label.includes('40'), 'برچسب محصول درست شد');
+      a(np.label.includes('نقره‌ای') && np.label.includes('۴۰'),
+        'برچسب محصول با رقم فارسی ساخته شد');
       a(np.coins === 150 && np.days === 45, 'قیمت و مدت محصول درست شد');
 
       // ── ویرایش محصول: حجم و مدت
       await go('admin:pedit:' + np.id);
       a(sent.text.includes('حجم'), 'صفحه ویرایش محصول باز شد');
       await go('admin:pgb:' + np.id);
-      a(sent.text.includes('40'), 'مقدار فعلی حجم نمایش داده شد');
+      a(sent.text.includes('۴۰'), 'مقدار فعلی حجم نمایش داده شد');
       await go('admin:pgbv:' + np.id + ':10');
       a(coin.getProduct(np.id).gb === 50, 'حجم محصول ویرایش شد');
       await go('admin:pdaysv:' + np.id + ':-5');
@@ -2692,7 +2730,7 @@ if (require.main === module) {
       await go('admin:user:u7');
       a(sent.text.includes('موجودی'), 'صفحه کاربر باز شد');
       await go('admin:grantv:u7:50');
-      a(sent.text.includes('50'), 'مقدار افزودن نمایش داده شد');
+      a(sent.text.includes('۵۰'), 'مقدار افزودن نمایش داده شد');
       await go('admin:grantgo:u7:50');
       a(sent.text.includes('ثبت شد'), 'افزودن کوین ثبت شد');
       a(coin.getBalance('u7') === 65, 'موجودی کاربر درست شد');
@@ -2713,7 +2751,7 @@ if (require.main === module) {
 
       // ── تنظیم دقیق موجودی
       await go('admin:setbal:u7:100:gift');
-      a(sent.text.includes('موجودی جدید') && sent.text.includes('100'),
+      a(sent.text.includes('موجودی جدید') && sent.text.includes('۱۰۰'),
         'صفحه تنظیم دقیق باز شد');
       await go('admin:setbalgo:u7:100:gift');
       a(coin.getBalance('u7') === 100, 'موجودی دقیقاً ۱۰۰ شد');
@@ -2745,7 +2783,7 @@ if (require.main === module) {
       a(JSON.stringify(sent.markup).includes('حضور روزانه'),
         'حضور روزانه در فهرست جوایز هست');
       await go('admin:rcoins:join');
-      a(sent.text.includes('10') && sent.text.includes('یک‌بار'),
+      a(sent.text.includes('۱۰') && sent.text.includes('یک‌بار'),
         'جایزه فعلی جوین با جزئیات نمایش داده شد');
       await go('admin:rv:join:5');
       a(coin.getRewards().join.coins === 15, 'جایزه جوین با دکمه +۵ شد');
@@ -2768,7 +2806,7 @@ if (require.main === module) {
         coin.getRewards().join.coins === 10, 'برگشت کامل به پیش‌فرض');
       // سقف و حداقل خرید برای خرید زیرمجموعه
       await go('admin:rcoins:ref_purchase');
-      a(sent.text.includes('5٪') && sent.text.includes('سقف'),
+      a(sent.text.includes('۵٪') && sent.text.includes('سقف'),
         'صفحه خرید زیرمجموعه جزئیات درصدی دارد');
       await go('admin:rcap:ref_purchase:50');
       a(coin.getRewards().ref_purchase.cap === 150, 'سقف جایزه +۵۰ شد');
@@ -2793,7 +2831,7 @@ if (require.main === module) {
       // فعالیت سفارشی
       coin.addRewardAction('visit', 7);
       await go('admin:rcoins:visit');
-      a(sent.text.includes('7'), 'فعالیت سفارشی در پنل دیده شد');
+      a(sent.text.includes('۷'), 'فعالیت سفارشی در پنل دیده شد');
       await go('admin:rv:visit:3');
       a(coin.getRewards().visit.coins === 10, 'جایزه فعالیت سفارشی ویرایش شد');
       await go('admin:rdel:visit');
@@ -2894,6 +2932,26 @@ if (require.main === module) {
       await go('admin:xyz'); await go('admin:back');
       a(sent.text.includes('مدیریت فاکس کوین'),
         'بازگشت بعد از مسیر ناشناخته امن است');
+
+      // ── دکمه‌ها نباید HTML خام یا رقم لاتین نشان دهند
+      // تلگرام داخل دکمه HTML رندر نمی‌کند؛ یک‌بار صفحه «جوایز
+      // فعالیت» به شکل «ثبت‌نام <code>20</code> کوین» درآمد.
+      a(kb([[{ text: 'x <code>۷</code> y' }]]).inline_keyboard[0][0].text
+        === 'x ۷ y', 'kb تگ code را از متن دکمه پاک می‌کند');
+      a(kb([[{ text: '<b>پ</b> ' + fa(20) + ' کوین' }]])
+        .inline_keyboard[0][0].text === 'پ ۲۰ کوین',
+        'همان چیزی که در عکس خراب بود حالا درست است');
+      a(kb([[{ text: 'یک\nدو' }]]).inline_keyboard[0][0].text === 'یک · دو',
+        'خط دوم دکمه به نقطه‌وسط تبدیل شد');
+      a(fa(1234) === '۱,۲۳۴', 'fa رقم فارسی با جداکننده می‌دهد');
+
+      await go('admin:rewards');
+      for (const r of sent.markup.inline_keyboard) for (const b of r) {
+        a(!/<[a-z\/][^>]*>/i.test(b.text),
+          'دکمه «' + b.text.slice(0, 22) + '» تگ خام ندارد');
+        a(!/\d/.test(b.text.replace(/[➕➖]\s*[\d.]+/g, '')),
+          'دکمه «' + b.text.slice(0, 22) + '» رقم لاتین ندارد');
+      }
 
       // ── دفتر کل و مسیر ناشناخته
       await go('admin:ledger');
