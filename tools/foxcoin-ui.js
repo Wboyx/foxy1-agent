@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN UI — رابط کاربری کوین
- *  نسخه: 1.5.0 | 2026-08-23 | فروشگاه + جوایز + روزانه + متن‌ها
+ *  نسخه: 1.5.1 | 2026-08-23 | فروشگاه + جوایز + روزانه + متن‌ها
  *  ۱.۴.۱: محافظ هوک سرویس‌سازی — خرید به‌جای TypeError پیام روشن می‌دهد
  * ════════════════════════════════════════════════════════════════
  *
@@ -21,7 +21,7 @@
 const coin = require('./foxcoin');
 
 const T = {
-  title: '🪙 فاکس کوین',
+  title: '🦊 فاکس کوین',
   balance: '💰 موجودی من',
   shop: '🛒 فروشگاه کوینی',
   missions: '🎯 ماموریت‌ها',
@@ -82,7 +82,7 @@ function screenMenu(uid) {
             '</code> کوین دیگر لازم دارید.\n\n')
       : '') +
     txt.menu_note + '\n\n' +
-    '<code>نسخه 1.5.0</code>';
+    '<code>نسخه 1.5.1</code>';
   return {
     text: text,
     markup: kb([
@@ -255,7 +255,7 @@ function screenShop(uid) {
     return {
       text: '<b>' + T.shop + '</b>\n' + LINE + '\n\n' +
             '⛔ فروشگاه در حال حاضر <b>بسته</b> است.\n\n' +
-            '🪙 موجودی شما <code>' + fa(bal) + '</code> کوین محفوظ است.\n' +
+            '🦊 موجودی شما <code>' + fa(bal) + '</code> کوین محفوظ است.\n' +
             '<i>به‌زودی باز می‌شود.</i>',
       markup: kb([[{ text: T.back, callback_data: 'coin' }]]),
     };
@@ -632,13 +632,13 @@ if (require.main === module) {
       coin.resetText('earn_join');
       coin.resetText('guide_rules');
       coin.resetText('menu_note');
-      a(screenMenu('u9').text.includes('نسخه 1.5.0'), 'نسخه جدید در منو نمایش داده شد');
+      a(screenMenu('u9').text.includes('نسخه 1.5.1'), 'نسخه جدید در منو نمایش داده شد');
 
       const mm = screenMenu('u9');
       a(mm.text.includes('راهنما') || JSON.stringify(mm.markup).includes('coin:help'),
         'دکمه راهنما در منو هست');
       a(mm.markup.inline_keyboard.length === 5, 'منو پنج ردیف شد');
-      a(mm.text.includes('نسخه 1.5.0'), 'نسخه جدید در منو نمایش داده شد');
+      a(mm.text.includes('نسخه 1.5.1'), 'نسخه جدید در منو نمایش داده شد');
 
       let hit = null;
       await route({ data: 'coin:help', uid: 'u9', config: {}, chatId: 1, messageId: 2,

@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN ADMIN — پنل مدیریت فاکس کوین
- *  نسخه: 1.7.0 | 2026-08-23 | فاکس شاپ + موتور جوایز + متن‌ها
+ *  نسخه: 1.8.0 | 2026-08-23 | فاکس شاپ + موتور جوایز + متن‌ها
  *  ۱.۶.۰: تشخیص نبود هوک getPlans + راه «افزودن دستی» محصول
  * ════════════════════════════════════════════════════════════════
  *
@@ -49,7 +49,7 @@ const T = {
   texts: '📝 متن‌ها',
   help: '❓ راهنما',
   back: '⬅️ بازگشت',
-  coinMenu: '🪙 منوی کوین',
+  coinMenu: '🦊 منوی کوین',
 };
 
 /** برچسب فارسی هر متن سفارشی، برای پنل. */
@@ -217,10 +217,10 @@ function screenMenu() {
   const text =
     '<b>' + T.title + '</b>\n' + LINE + '\n\n' +
     '👥 کاربران دارای موجودی\n<code>' + fa(s.holders) + '</code>\n\n' +
-    '🪙 کوین در گردش\n<code>' + fa(s.circulating) + '</code>\n\n' +
+    '🦊 کوین در گردش\n<code>' + fa(s.circulating) + '</code>\n\n' +
     '📊 مجموع رویدادها\n<code>' + fa(s.events) + '</code>\n\n' +
     '<i>هر تغییر با دکمه انجام می‌شود و در دفتر کل ثبت می‌شود.</i>\n\n' +
-    '<code>نسخه 1.7.0</code>';
+    '<code>نسخه 1.8.0</code>';
   return {
     text: text,
     markup: kb([
@@ -251,7 +251,7 @@ function screenStats() {
     '<b>' + T.stats + '</b>\n' + LINE + '\n\n' +
     '📥 مجموع صادرشده\n<code>' + fa(s.issued) + '</code> کوین\n\n' +
     '📤 مجموع خرج‌شده\n<code>' + fa(s.spent) + '</code> کوین\n\n' +
-    '🪙 در گردش\n<code>' + fa(s.circulating) + '</code> کوین\n\n' +
+    '🦊 در گردش\n<code>' + fa(s.circulating) + '</code> کوین\n\n' +
     '👥 دارندگان\n<code>' + fa(s.holders) + '</code> کاربر\n\n' +
     '📊 کل رویدادها\n<code>' + fa(s.events) + '</code>\n\n' + LINE + '\n\n' +
     '<b>امروز</b>\n' +
@@ -324,6 +324,108 @@ function rewardSummary(cfg) {
   return fa(cfg.coins) + ' کوین';
 }
 
+
+/**
+ * ── پلکان خرید ─────────────────────────────────────────────
+ * «خرید اول ۵۰، دوم ۳۰، بقیه ۱۰» بدون تایپ متن: هر پله یک ردیف
+ * با +/− و امکان افزودن/حذف پله.
+ */
+function screenTier() {
+  const t = coin.getTiers();
+  let text = '<b>🪜 پلکان خرید</b>\n' + LINE + '\n\n';
+  if (!t.enabled || !t.tiers.length) {
+    text += '⛔️ خاموش است.\n\n' +
+            '<i>وقتی روشن باشد، جایزه هر خرید بر اساس شماره آن\n' +
+            'خرید داده می‌شود — نه یک عدد ثابت.\n\n' +
+            'مثال: خرید اول ۵۰، دوم ۳۰، سوم به بعد ۱۰.</i>';
+  } else {
+    text += '<i>جایزه بر اساس چندمین خرید کاربر:</i>\n\n';
+    t.tiers.forEach((v, i) => {
+      text += '• خرید ' + fa(i + 1) + 'اُم — <code>' + fa(v) + '</code> کوین\n';
+    });
+    text += '• بقیه خریدها — <code>' +
+            fa(t.rest === null ? t.tiers[t.tiers.length - 1] : t.rest) +
+            '</code> کوین\n\n' +
+            '<i>تا وقتی روشن است، «خرید سرویس» و «اولین خرید»\n' +
+            'از فهرست جوایز کنار گذاشته می‌شوند.</i>';
+  }
+  const rows = [];
+  t.tiers.forEach((v, i) => {
+    rows.push([{ text: 'خرید ' + fa(i + 1) + 'اُم: ' + fa(v),
+                 callback_data: 'admin:ignore' }]);
+    rows.push([
+      { text: '➖10', callback_data: 'admin:tierv:' + i + ':-10' },
+      { text: '➖1', callback_data: 'admin:tierv:' + i + ':-1' },
+      { text: '➕1', callback_data: 'admin:tierv:' + i + ':1' },
+      { text: '➕10', callback_data: 'admin:tierv:' + i + ':10' },
+    ]);
+  });
+  if (t.tiers.length) {
+    rows.push([{ text: 'بقیه خریدها: ' +
+                       fa(t.rest === null ? t.tiers[t.tiers.length - 1] : t.rest),
+                 callback_data: 'admin:ignore' }]);
+    rows.push([
+      { text: '➖10', callback_data: 'admin:tierr:-10' },
+      { text: '➖1', callback_data: 'admin:tierr:-1' },
+      { text: '➕1', callback_data: 'admin:tierr:1' },
+      { text: '➕10', callback_data: 'admin:tierr:10' },
+    ]);
+  }
+  const addRow = [{ text: '➕ افزودن پله', callback_data: 'admin:tieradd' }];
+  if (t.tiers.length) {
+    addRow.push({ text: '🗑 حذف آخری', callback_data: 'admin:tierdel' });
+  }
+  rows.push(addRow);
+  rows.push([{ text: t.enabled ? '⛔️ خاموش کردن' : '✅ روشن کردن',
+               callback_data: 'admin:tiertog' }]);
+  rows.push([{ text: T.back, callback_data: 'admin:rewards' }]);
+  return { text: text, markup: kb(rows) };
+}
+
+function tierAdd() {
+  const t = coin.getTiers();
+  const last = t.tiers.length ? t.tiers[t.tiers.length - 1] : 50;
+  coin.setTiers({ tiers: t.tiers.concat([Math.max(0, last)]),
+                  enabled: true });
+  return screenTier();
+}
+
+function tierDel() {
+  const t = coin.getTiers();
+  coin.setTiers({ tiers: t.tiers.slice(0, -1) });
+  return screenTier();
+}
+
+function tierAdjust(idx, delta) {
+  const t = coin.getTiers();
+  const i = Number(idx);
+  if (!(i >= 0 && i < t.tiers.length)) return screenTier();
+  const next = t.tiers.slice();
+  next[i] = Math.max(0, next[i] + Number(delta));
+  coin.setTiers({ tiers: next });
+  return screenTier();
+}
+
+function tierRest(delta) {
+  const t = coin.getTiers();
+  const base = t.rest === null
+    ? (t.tiers.length ? t.tiers[t.tiers.length - 1] : 0)
+    : t.rest;
+  coin.setTiers({ rest: Math.max(0, base + Number(delta)) });
+  return screenTier();
+}
+
+function tierToggle() {
+  const t = coin.getTiers();
+  if (!t.tiers.length && !t.enabled) {
+    // روشن‌کردن بدون پله بی‌معنی است: یک پله پیش‌فرض بساز
+    coin.setTiers({ tiers: [50, 30], rest: 10, enabled: true });
+  } else {
+    coin.setTiers({ enabled: !t.enabled });
+  }
+  return screenTier();
+}
+
 function screenRewards() {
   const rw = coin.getRewards();
   const defKeys = Object.keys(coin.REWARD_DEFAULTS || {});
@@ -332,8 +434,18 @@ function screenRewards() {
              '<i>برای هر فعالیت، نوع و مقدار جایزه را تعیین کنید.\n' +
              'روی هر آیتم بزنید تا ویرایش شود.</i>\n';
   const rows = [];
+  const t = coin.getTiers();
+  rows.push([{ text: '🪜 پلکان خرید' +
+                     (t.enabled && t.tiers.length
+                       ? ' (' + t.tiers.map(fa).join('/') +
+                         (t.rest !== null ? '/' + fa(t.rest) : '') + ')'
+                       : ' — خاموش'),
+               callback_data: 'admin:tier' }]);
   for (const key of [...defKeys, ...customKeys]) {
     const cfg = rw[key];
+    // وقتی پلکان روشن است، این دو کلید دیگر اثری ندارند
+    if (t.enabled && t.tiers.length &&
+        (key === 'purchase' || key === 'first_purchase')) continue;
     const label = REWARD_LABELS[key] || key;
     const custom = customKeys.includes(key) ? ' ⭐' : '';
     const rep = cfg.repeat === 'always' ? '— هر بار' : '— یک‌بار';
@@ -1681,6 +1793,16 @@ async function route(ctx) {
     const parts = after(d, P.setbalgo).split(':');
     s = doSetBal(parts[0], Number(parts[1]) || 0, parts[2] || 'other');
   } else if (d === 'admin:rewards') s = screenRewards();
+  else if (d === 'admin:tier') s = screenTier();
+  else if (d === 'admin:tieradd') s = tierAdd();
+  else if (d === 'admin:tierdel') s = tierDel();
+  else if (d === 'admin:tiertog') s = tierToggle();
+  else if (d.startsWith('admin:tierv:')) {
+    const [ti, tv] = after(d, 'admin:tierv:').split(':');
+    s = tierAdjust(ti, tv);
+  } else if (d.startsWith('admin:tierr:')) {
+    s = tierRest(after(d, 'admin:tierr:'));
+  }
   else if (d.startsWith(P.rcoins)) s = screenRewardEdit(after(d, P.rcoins));
   else if (d.startsWith(P.rcoinsv)) {
     const [k, v] = after(d, P.rcoinsv).split(':');
@@ -1965,6 +2087,36 @@ if (require.main === module) {
       const beforeIgnore = sent.text;
       await go('admin:ignore');
       a(sent.text === beforeIgnore, 'دکمه تزئینی صفحه را عوض نکرد');
+
+      // ── پلکان خرید
+      await go('admin:rewards');
+      a(JSON.stringify(sent.markup).includes('admin:tier'), 'دکمه پلکان در جوایز هست');
+      await go('admin:tier');
+      a(sent.text.includes('پلکان'), 'صفحه پلکان باز شد');
+      a(sent.text.includes('خاموش'), 'در ابتدا خاموش است');
+      await go('admin:tiertog');
+      a(coin.getTiers().enabled === true, 'پلکان روشن شد');
+      a(coin.getTiers().tiers.length === 2, 'پله‌های پیش‌فرض ساخته شد');
+      const t0 = coin.getTiers().tiers[0];
+      await go('admin:tierv:0:10');
+      a(coin.getTiers().tiers[0] === t0 + 10, 'پله اول زیاد شد');
+      await go('admin:tierv:0:-10');
+      a(coin.getTiers().tiers[0] === t0, 'پله اول کم شد');
+      await go('admin:tieradd');
+      a(coin.getTiers().tiers.length === 3, 'پله جدید اضافه شد');
+      await go('admin:tierdel');
+      a(coin.getTiers().tiers.length === 2, 'پله آخر حذف شد');
+      const r0 = coin.getTiers().rest;
+      await go('admin:tierr:5');
+      a(coin.getTiers().rest === r0 + 5, 'جایزه بقیه خریدها زیاد شد');
+      await go('admin:rewards');
+      a(!JSON.stringify(sent.markup).includes('admin:rcoins:purchase'),
+        'با پلکان روشن، «خرید سرویس» از فهرست کنار رفت');
+      await go('admin:tiertog');
+      a(coin.getTiers().enabled === false, 'پلکان خاموش شد');
+      await go('admin:rewards');
+      a(JSON.stringify(sent.markup).includes('admin:rcoins:purchase'),
+        'با پلکان خاموش، «خرید سرویس» برگشت');
 
       // ── کاربران و افزودن/کسر کوین
       await go('admin:users');

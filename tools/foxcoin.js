@@ -2,7 +2,7 @@
 /**
  * ════════════════════════════════════════════════════════════════
  *  FOX COIN — هسته اقتصاد کوین
- *  نسخه: 1.7.0 | 2026-08-22 | موتور جوایز پیشرفته (ثابت/درصدی/نسبی + سقف + زنجیره روزانه)
+ *  نسخه: 1.8.0 | 2026-08-22 | موتور جوایز پیشرفته (ثابت/درصدی/نسبی + سقف + زنجیره روزانه)
  * ════════════════════════════════════════════════════════════════
  *
  *  چرا فایل جدا:
@@ -206,7 +206,7 @@ function claimMission(uid, missionId, reward) {
  *   enabled     روشن/خاموش
  */
 const REWARD_DEFAULTS = {
-  signup:   { mode: 'fixed', coins: 5,   percent: 0, perAmount: 10000, cap: 0,   minPurchase: 0, repeat: 'once',   enabled: true },
+  signup:   { mode: 'fixed', coins: 20,   percent: 0, perAmount: 10000, cap: 0,   minPurchase: 0, repeat: 'once',   enabled: true },
   join:     { mode: 'fixed', coins: 10,  percent: 0, perAmount: 10000, cap: 0,   minPurchase: 0, repeat: 'once',   enabled: true },
   referral: { mode: 'fixed', coins: 10,  percent: 0, perAmount: 10000, cap: 0,   minPurchase: 0, repeat: 'once',   enabled: true },
   mission:  { mode: 'fixed', coins: 3,   percent: 0, perAmount: 10000, cap: 0,   minPurchase: 0, repeat: 'once',   enabled: true },
@@ -377,7 +377,90 @@ function grantReward(uid, key, ctx) {
 }
 
 /** جایزه خرید سرویس (خود کاربر) + پاداش اولین خرید. */
+/**
+ * چندمین خرید کاربر است؟ از دفتر کل شمرده می‌شود، نه از شمارنده
+ * جدا — چون دفتر کل تنها منبع حقیقت است و اگر ادمین رویدادی را
+ * دستی اصلاح کند، شمارش هم خودش درست می‌ماند.
+ * خروجی: تعداد خریدهای *قبلی* (۰ یعنی این اولین خرید است).
+ */
+function purchaseCount(uid) {
+  uid = String(uid);
+  let n = 0;
+  for (const e of readLedger()) {
+    if (String(e.uid) !== uid) continue;
+    if (e.type === 'purchase') n++;
+  }
+  return n;
+}
+
+/**
+ * ── پلکان خرید ─────────────────────────────────────────────
+ * برای «خرید اول ۵۰، دوم ۳۰، سوم به بعد ۱۰».
+ * در tiers ذخیره می‌شود: آرایه‌ای از عددها که هر خانه جایزه همان
+ * شماره خرید است؛ بعد از آخرین خانه، rest برای بقیه.
+ *
+ *   tiers: [50, 30]   rest: 10
+ *   خرید ۱ → ۵۰ ، خرید ۲ → ۳۰ ، خرید ۳ به بعد → ۱۰
+ *
+ * اگر tiers خالی باشد، رفتار قبلی (fixed/percent/per) دست‌نخورده
+ * می‌ماند — یعنی نصب‌های موجود چیزی حس نمی‌کنند.
+ */
+function getTiers() {
+  const s = loadStore();
+  const t = s.purchaseTiers || {};
+  return {
+    tiers: Array.isArray(t.tiers) ? t.tiers.map(x => Math.max(0, Math.round(Number(x) || 0))) : [],
+    rest: t.rest === undefined || t.rest === null ? null : Math.max(0, Math.round(Number(t.rest) || 0)),
+    enabled: !!t.enabled,
+  };
+}
+
+function setTiers(patch) {
+  const s = loadStore();
+  const cur = getTiers();
+  if (patch.tiers !== undefined) {
+    cur.tiers = (patch.tiers || []).map(x => Math.max(0, Math.round(Number(x) || 0)));
+  }
+  if (patch.rest !== undefined) {
+    cur.rest = patch.rest === null ? null : Math.max(0, Math.round(Number(patch.rest) || 0));
+  }
+  if (patch.enabled !== undefined) cur.enabled = !!patch.enabled;
+  s.purchaseTiers = cur;
+  saveStore(s);
+  return getTiers();
+}
+
+/** جایزه پلکانی برای n اُمین خرید (n از ۱ شروع می‌شود). */
+function tierCoinsFor(n) {
+  const t = getTiers();
+  if (!t.enabled || !t.tiers.length) return null;
+  const idx = Math.max(1, Math.round(Number(n) || 1)) - 1;
+  if (idx < t.tiers.length) return t.tiers[idx];
+  return t.rest === null ? t.tiers[t.tiers.length - 1] : t.rest;
+}
+
 function onPurchase(uid, amountToman, meta) {
+  // شماره این خرید = خریدهای قبلی + ۱
+  const nth = purchaseCount(uid) + 1;
+  const tierCoins = tierCoinsFor(nth);
+
+  if (tierCoins !== null) {
+    // حالت پلکانی: یک جایزه بر اساس شماره خرید.
+    // first_purchase جدا داده نمی‌شود چون پله اول خودش همان است.
+    const out = [];
+    if (tierCoins > 0) {
+      const meta2 = Object.assign({ action: 'purchase', nth: nth },
+                                  meta || {});
+      const r = addEvent(uid, 'purchase', tierCoins, meta2);
+      out.push(Object.assign({ key: 'purchase', nth: nth, tier: true },
+                             r, { amount: tierCoins }));
+    } else {
+      out.push({ key: 'purchase', nth: nth, tier: true, ok: false,
+                 reason: 'جایزه این پله صفر است' });
+    }
+    return out;
+  }
+
   return [
     Object.assign({ key: 'purchase' },
       grantReward(uid, 'purchase', { amount: amountToman, meta: meta })),
@@ -484,6 +567,7 @@ const TEXTS = {
   earn_referral: 'خرید دوستان دعوت‌شده',
   earn_daily: 'حضور روزانه',
   earn_first_purchase: 'اولین خرید شما',
+  earn_signup_welcome: 'هدیه خوش‌آمدگویی',
   earn_ref_purchase: 'خرید زیرمجموعه‌های شما',
 };
 
@@ -848,6 +932,21 @@ function cli() {
       return out(clearManualPrice(a));
     case 'rewards':
       return out(getRewards());
+    case 'tiers':
+      return out(getTiers());
+    case 'tiers-set': {
+      // node foxcoin.js tiers-set '50,30' 10
+      const list = String(a || '').split(',')
+        .map(x => x.trim()).filter(Boolean).map(Number);
+      return out(setTiers({ tiers: list, enabled: list.length > 0,
+                            rest: b === undefined ? null : Number(b) }));
+    }
+    case 'tiers-off':
+      return out(setTiers({ enabled: false }));
+    case 'tiers-test':
+      return out({ nth: Number(a) || 1, coins: tierCoinsFor(Number(a) || 1) });
+    case 'purchase-count':
+      return out({ uid: a, count: purchaseCount(a) });
     case 'reward':
       return out({ key: a, reward: b === undefined ? getReward(a)
                                                    : setReward(a, Number(b)) });
@@ -991,7 +1090,33 @@ function selftest() {
     'a(m.history("u1",2).length===2,"تاریخچه محدود شد");',
     'a(m.history("u1",1)[0].type==="spend","آخرین رویداد خرج است");',
     'const rw0=m.getRewards();',
-    'a(rw0.signup.coins===5 && rw0.join.coins===10 && rw0.mission.coins===3,"جوایز پیش‌فرض درست است");',
+    'a(rw0.signup.coins===20 && rw0.join.coins===10 && rw0.mission.coins===3,"جوایز پیش‌فرض درست است");',
+    '',
+    '// ── پلکان خرید',
+    'a(m.tierCoinsFor(1)===null,"بدون پلکان، نال برمی‌گردد");',
+    'm.setTiers({enabled:true,tiers:[50,30],rest:10});',
+    'a(m.tierCoinsFor(1)===50,"پله اول ۵۰");',
+    'a(m.tierCoinsFor(2)===30,"پله دوم ۳۰");',
+    'a(m.tierCoinsFor(3)===10,"بقیه ۱۰");',
+    'a(m.tierCoinsFor(99)===10,"پله نودونهم هم ۱۰");',
+    'a(m.purchaseCount("tu")===0,"کاربر تازه صفر خرید دارد");',
+    'var t1=m.onPurchase("tu",100000);',
+    'a(t1[0].amount===50 && t1[0].nth===1,"خرید اول ۵۰ کوین داد");',
+    'a(t1.length===1,"در حالت پلکان، جایزه دوگانه داده نمی‌شود");',
+    'var t2=m.onPurchase("tu",100000);',
+    'a(t2[0].amount===30 && t2[0].nth===2,"خرید دوم ۳۰ کوین داد");',
+    'var t3=m.onPurchase("tu",100000);',
+    'a(t3[0].amount===10 && t3[0].nth===3,"خرید سوم ۱۰ کوین داد");',
+    'a(m.getBalance("tu")===90,"جمع پلکان درست است: ۵۰+۳۰+۱۰");',
+    'a(m.purchaseCount("tu")===3,"شمارش خرید درست است");',
+    '// rest=null یعنی تکرار آخرین پله',
+    'm.setTiers({tiers:[7,5],rest:null});',
+    'a(m.tierCoinsFor(9)===5,"بدون rest، آخرین پله تکرار می‌شود");',
+    '// خاموش‌کردن پلکان رفتار قدیمی را برمی‌گرداند',
+    'm.setTiers({enabled:false});',
+    'a(m.tierCoinsFor(1)===null,"خاموش یعنی نال");',
+    'var old1=m.onPurchase("tv",100000);',
+    'a(old1.length===2,"رفتار قدیمی: دو جایزه جدا");',
     'a(rw0.ref_purchase.mode==="percent" && rw0.ref_purchase.percent===5,"خرید زیرمجموعه پیش‌فرض درصدی است");',
     'a(m.computeReward("ref_purchase",{amount:1000})===50,"درصد جایزه زیرمجموعه حساب شد");',
     'a(m.computeReward("ref_purchase",{amount:100000})===100,"سقف جایزه زیرمجموعه اعمال شد");',
@@ -1081,6 +1206,7 @@ module.exports = {
   getRewards, getReward, setReward, setRewardConfig, resetRewardConfig, computeReward,
   addRewardAction, removeRewardAction, grantReward,
   onPurchase, rewardReferral, rewardRefPurchase,
+  purchaseCount, getTiers, setTiers, tierCoinsFor,
   claimDaily, dailyStatus, coinsForPurchase,
   getTexts, setText, resetText, TEXTS,
   history, stats, readLedger, DEFAULTS, EVENTS, REWARD_DEFAULTS,
