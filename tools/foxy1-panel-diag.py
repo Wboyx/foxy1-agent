@@ -283,29 +283,34 @@ def probe(base, kind, user, pw, apitoken, timeout, do_login):
             r["layer"] = "unknown"
             r["note"] = "apiToken نیست؛ با توکن API تست نشد"
             return r
-        # مسیر وب‌هوک x-ui با پیشوند وب‌بیس پنل
-        root = (p.path or "").rstrip("/")
-        for path in (root + "/server/status", root + "/xui/server/status"):
-            req = urllib.request.Request(base + path, method="GET",
-                                         headers={"X-XUI-FIDOOD": apitoken, "User-Agent": UA})
-            t0 = time.time()
+        # دقیقاً مثل ربات اصلی (bot.js:xuiFetch): هدر Bearer + مسیر /panel/api/inbounds/list
+        t0 = time.time()
+        req = urllib.request.Request(base + "/panel/api/inbounds/list", method="GET",
+                                     headers={"Authorization": "Bearer " + apitoken,
+                                              "User-Agent": UA})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=_ctx()) as resp:
+                b = resp.read(400).decode("utf-8", "replace")
+                c = resp.status
+        except urllib.error.HTTPError as e:
+            c, b = e.code, e.read(400).decode("utf-8", "replace")
+        except Exception as e:
+            c, b = 0, "%s: %s" % (type(e).__name__, e)
+        r["endpoint"] = "/panel/api/inbounds/list"
+        r["login_ms"] = int((time.time() - t0) * 1000)
+        if c == 200:
             try:
-                with urllib.request.urlopen(req, timeout=timeout, context=_ctx()) as resp:
-                    b = resp.read(200).decode("utf-8", "replace")
-                    c = resp.status
-            except urllib.error.HTTPError as e:
-                c, b = e.code, e.read(200).decode("utf-8", "replace")
-            except Exception as e:
-                c, b = 0, "%s: %s" % (type(e).__name__, e)
-            if c == 200:
-                r["endpoint"] = path
-                r["login_ms"] = int((time.time() - t0) * 1000)
-                r["note"] = "توکن API پذیرفته شد ✅"
+                okk = json.loads(b).get("success")
+            except Exception:
+                okk = None
+            if okk:
+                r["note"] = "توکن API پذیرفته شد، فهرست اینباندها آمد ✅"
                 return r
-            last = (path, c, b)
-        r["layer"] = "auth" if last[1] in (401, 403) else "api"
-        r["endpoint"] = last[0]
-        r["note"] = "HTTP %s: %s" % (last[1], (last[2] or "")[:70].replace("\n", " "))
+            r["layer"] = "api"
+            r["note"] = "HTTP 200 ولی success=false: %s" % (b or "")[:70].replace("\n", " ")
+            return r
+        r["layer"] = "auth" if c in (401, 403) else "api"
+        r["note"] = "HTTP %s: %s" % (c, (b or "")[:70].replace("\n", " "))
         return r
 
     r["note"] = "نوع پنل «%s» شناخته نشد؛ فقط لایه‌ها سنجیده شد" % kind
