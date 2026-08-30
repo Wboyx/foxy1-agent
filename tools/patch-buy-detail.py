@@ -1,29 +1,35 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-patch-buy-detail.py — UX جدید خرید + ویرایش راحت توضیح از مدیریت.
+patch-buy-detail.py (v2) — UX جدید خرید + ویرایش راحت توضیح از مدیریت.
 
-۱) کلیک روی محصول -> صفحه‌ی توضیح کامل + دکمه «✅ ادامه» -> بعد یوزرنیم/پرداخت.
-۲) در مدیریت محصولات، دکمه «📝 توضیح» برای ویرایش مستقیم توضیح هر محصول.
-۳) فهرست خرید دوباره ساده می‌شود (توضیح فقط در صفحه‌ی جزئیات).
+۱) کلیک روی محصول -> صفحه‌ی توضیح کامل + «در صورت تایید روی دکمه زیر کلیک کنید»
+   -> دکمه ادامه -> یوزرنیم -> پرداخت. (برای همه‌ی دسته‌ها)
+۲) توضیح از فهرست خرید و از فاکتور نهایی حذف می‌شود (فقط صفحه‌ی محصول).
+۳) در مدیریت محصولات، دکمه «📝 توضیح» برای ویرایش مستقیم توضیح هر محصول
+   (شامل محصولاتی که بعداً اضافه می‌شوند).
 
-ایمن: بکاپ + node --check + rollback. فقط bot.js.
-کاربرد:
-    python3 patch-buy-detail.py [--app PATH]
-بعد: systemctl restart foxteam-bot
+ایمن: بکاپ + node --check + rollback. فقط bot.js را دست می‌زند.
+کاربرد:  python3 patch-buy-detail.py [--app PATH]
+بعد:     systemctl restart foxteam-bot
 """
-import argparse, os, shutil, subprocess, sys, time
+import argparse, os, re, shutil, subprocess, sys, time
 
 DEFAULT = "/root/foxteam-bot/bot.js"
 
-# ۱) فهرست خرید ساده (حذف بلوک shopDescText پچ قبلی)
+# --- (اختیاری) ساده‌سازی فهرست خرید اگر پچ قبلی shopDescText فعال باشد ---
 OLD_LIST = """    let shopDescText = "";
     plans.forEach((p) => { if (p.desc && p.desc !== "ندارد") shopDescText += `\\n🛍 **${p.name}**\\n${p.desc}\\n`; });
     const shopListMsg = `👇 **محصول مورد نظر را انتخاب کنید:**` + (shopDescText ? `\\n━━━━━━━━━━━━━━${shopDescText}` : "");
     return editTelegram(config, chatId, cb.message.message_id, shopListMsg, { inline_keyboard: rows });"""
 NEW_LIST = """    return editTelegram(config, chatId, cb.message.message_id, `👇 **محصول مورد نظر را انتخاب کنید:**`, { inline_keyboard: rows });"""
 
-# ۲) صفحه‌ی جزئیات به‌جای پرسش مستقیم یوزرنیم
+# --- (اختیاری) حذف توضیح از فاکتور نهایی (مسیر نامحدود) ---
+OLD_INV_U = """        `${state.meta.desc && state.meta.desc !== "ندارد" ? `📝 **مشخصات:** ${state.meta.desc}\\n` : ""}` +\n"""
+# --- (اختیاری) حذف توضیح از فاکتور نهایی (مسیر حجمی) ---
+OLD_INV_V = """      `${state.meta.desc && state.meta.desc !== "ندارد" ? `📝 **مشخصات:** ${state.meta.desc}\\n` : ""}` +\n"""
+
+# --- صفحه‌ی جزئیات به‌جای پرسش مستقیم یوزرنیم ---
 OLD_BUY = """    // در هر دو حالت ابتدا یوزرنیم درخواستی از کاربر سوال می‌شود
     await setState(env, userId, {
       step: "awaiting_config_username",
@@ -31,13 +37,13 @@ OLD_BUY = """    // در هر دو حالت ابتدا یوزرنیم درخوا
     });
     return editTelegram(config, chatId, cb.message.message_id, `👤 **لطفاً یک یوزرنیم انگلیسی دلخواه برای کانفیگ خود ارسال کنید:**\\n*(مثال: ali)*`, { inline_keyboard: [[{ text: "🔙 انصراف", callback_data: `shop_cat:${cat}` }]] });"""
 NEW_BUY = """    const priceLabel = cat === "volume" ? `${plan.price.toLocaleString("en-US")} تومان / گیگ` : `${plan.price.toLocaleString("en-US")} تومان`;
-    const detailText = `🛍 **${plan.name}**\\n💲 ${priceLabel}\\n━━━━━━━━━━━━━━\\n${(plan.desc && plan.desc !== "ندارد") ? plan.desc : "توضیحی ثبت نشده."}\\n━━━━━━━━━━━━━━\\nاگر مناسب است، ادامه بدهید:`;
+    const detailText = `🛍 **${plan.name}**\\n💲 ${priceLabel}\\n━━━━━━━━━━━━━━\\n${(plan.desc && plan.desc !== "ندارد") ? plan.desc : "توضیحی ثبت نشده."}\\n━━━━━━━━━━━━━━\\n✅ در صورت تایید، روی دکمه‌ی زیر کلیک کنید:`;
     return editTelegram(config, chatId, cb.message.message_id, detailText, { inline_keyboard: [
       [{ text: "✅ ادامه و انتخاب یوزرنیم", callback_data: `buycont:${cat}:${plan.id}` }],
       [{ text: "🔙 بازگشت به محصولات", callback_data: `shop_cat:${cat}` }]
     ] });"""
 
-# ۳) هندلر ادامه (همان منطق قبلی یوزرنیم)
+# --- هندلر ادامه (همان منطق قبلی یوزرنیم) ---
 OLD_WALLET = """  if (data === "wallet") {"""
 NEW_WALLET = """  if (data.startsWith("buycont:")) {
     const parts = data.split(":");
@@ -54,18 +60,7 @@ NEW_WALLET = """  if (data.startsWith("buycont:")) {
 
   if (data === "wallet") {"""
 
-# ۴) دکمه «📝 توضیح» در مدیریت
-OLD_ROWS = """      rows.push([
-        { text: `✏️ ویرایش ${p.name}`, callback_data: `edit_plan:${cat}:${p.id}` },
-        { text: `❌ حذف`, callback_data: `remove_plan:${cat}:${p.id}` }
-      ]);"""
-NEW_ROWS = """      rows.push([
-        { text: `✏️ ${p.name}`, callback_data: `edit_plan:${cat}:${p.id}` },
-        { text: `📝 توضیح`, callback_data: `edit_desc:${cat}:${p.id}` },
-        { text: `❌ حذف`, callback_data: `remove_plan:${cat}:${p.id}` }
-      ]);"""
-
-# ۵) هندلر ویرایش سریع توضیح
+# --- هندلر ویرایش سریع توضیح (قبل از remove_plan) ---
 OLD_REMOVE = """  if (data.startsWith("remove_plan:")) {"""
 NEW_REMOVE = """  if (data.startsWith("edit_desc:")) {
     const parts = data.split(":");
@@ -78,7 +73,7 @@ NEW_REMOVE = """  if (data.startsWith("edit_desc:")) {
 
   if (data.startsWith("remove_plan:")) {"""
 
-# ۶) step handler ذخیره‌ی توضیح
+# --- step handler ذخیره‌ی توضیح ---
 OLD_STEP = """    admin_awaiting_plan_desc: async (v) => {"""
 NEW_STEP = """    admin_edit_desc_only: async (v) => {
       const cat = state.meta.cat; const planId = state.meta.planId;
@@ -92,14 +87,42 @@ NEW_STEP = """    admin_edit_desc_only: async (v) => {
     },
     admin_awaiting_plan_desc: async (v) => {"""
 
-REPL = [
-    ("simple-list", OLD_LIST, NEW_LIST),
+CORE = [
     ("detail-screen", OLD_BUY, NEW_BUY),
     ("continue-handler", OLD_WALLET, NEW_WALLET),
-    ("admin-desc-button", OLD_ROWS, NEW_ROWS),
     ("edit-desc-handler", OLD_REMOVE, NEW_REMOVE),
     ("desc-step", OLD_STEP, NEW_STEP),
 ]
+OPTIONAL = [
+    ("simple-list", OLD_LIST, NEW_LIST),
+    ("invoice-unlimited", OLD_INV_U, ""),
+    ("invoice-volume", OLD_INV_V, ""),
+]
+
+
+def apply_admin_button(txt):
+    exact_old = """      rows.push([
+        { text: `✏️ ویرایش ${p.name}`, callback_data: `edit_plan:${cat}:${p.id}` },
+        { text: `❌ حذف`, callback_data: `remove_plan:${cat}:${p.id}` }
+      ]);"""
+    exact_new = """      rows.push([
+        { text: `✏️ ویرایش ${p.name}`, callback_data: `edit_plan:${cat}:${p.id}` },
+        { text: `📝 توضیح`, callback_data: `edit_desc:${cat}:${p.id}` },
+        { text: `❌ حذف`, callback_data: `remove_plan:${cat}:${p.id}` }
+      ]);"""
+    if exact_old in txt:
+        return txt.replace(exact_old, exact_new, 1), "exact"
+    # fallback: هر بلوک rows.push که کالبک edit_plan را دارد (متن/ایموجی دکمه‌ها فرق کند هم مهم نیست)
+    pat = re.compile(r"rows\.push\(\[(?:(?!\]\);).)*?edit_plan:\$\{cat\}:\$\{p\.id\}`(?:(?!\]\);).)*?\]\);", re.S)
+    m = pat.search(txt)
+    if not m:
+        return None, None
+    block = m.group(0)
+    inner = block[: -len("]);")].rstrip()
+    if inner.endswith("}"):
+        inner += ","
+    newblock = inner + "\n        { text: `📝 توضیح`, callback_data: `edit_desc:${cat}:${p.id}` }\n      ]);"
+    return txt[: m.start()] + newblock + txt[m.end():], "regex"
 
 
 def main():
@@ -114,26 +137,37 @@ def main():
     if "buycont:" in txt and "admin_edit_desc_only" in txt:
         print("ALREADY PATCHED."); return 0
 
-    missing = [n for n, o, _ in REPL if o not in txt]
+    missing = [n for n, o, _ in CORE if o not in txt]
     if missing:
-        print("ERROR: missing targets:", missing); return 2
+        print("ERROR: missing core targets:", missing); return 2
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
     bak = "%s.bak-buydetail-%s" % (a.app, stamp)
     shutil.copy2(a.app, bak)
     print("BACKUP:", bak)
 
-    for n, o, nw in REPL:
-        txt = txt.replace(o, nw, 1)
+    applied = []
+    for n, o, nw in CORE:
+        txt = txt.replace(o, nw, 1); applied.append(n)
+
+    for n, o, nw in OPTIONAL:
+        if o in txt:
+            txt = txt.replace(o, nw, 1); applied.append(n)
+
+    txt, how = apply_admin_button(txt)
+    if txt is None:
+        print("ERROR: manage_cat rows block not found (admin-desc-button).")
+        print("rolled back automatically (backup untouched)."); return 3
+    applied.append("admin-desc-button:" + how)
 
     tmp = a.app + ".buydetail.tmp.js"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(txt)
     chk = subprocess.run(["node", "--check", tmp], capture_output=True, text=True)
     if chk.returncode != 0:
-        os.remove(tmp); print("SYNTAX FAILED -> rolled back."); print(chk.stderr[:400]); return 3
+        os.remove(tmp); print("SYNTAX FAILED -> rolled back."); print(chk.stderr[:400]); return 4
     os.replace(tmp, a.app)
-    print("PATCHED OK:", ", ".join(n for n, _, _ in REPL))
+    print("PATCHED OK:", ", ".join(applied))
     print("NEXT: systemctl restart foxteam-bot")
     print("rollback: cp %s %s" % (bak, a.app))
     return 0
