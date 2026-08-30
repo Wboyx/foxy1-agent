@@ -96,6 +96,8 @@ def build_desc(plan, kind):
     protos = protocols(inbounds)
     days = plan.get("days") or 0
     min_gb = plan.get("minGb") or 0
+    name = plan.get("name") or ""
+    pid = plan.get("id") or ""
     L = ["🌍 لوکیشن‌ها: %s" % ("، ".join(countries) if countries else "چندلوکیشنه — پس از خرید قابل انتخاب")]
     if protos:
         L.append("🔐 پروتکل: %s" % "، ".join(protos))
@@ -108,6 +110,14 @@ def build_desc(plan, kind):
     L.append("💡 %s" % _PROTO.get(protos[0] if protos else "", "اتصال پایدار با چند لوکیشن قابل انتخاب."))
     if len(countries) > 3:
         L.append("✨ با تنوع لوکیشن بالا، مناسب استریم، وب‌گردی و دورزدن محدودیت‌های منطقه‌ای.")
+    # اصلاحات تأییدشده‌ی مالک:
+    L.append("📱💻 سازگار با گوشی و کامپیوتر — بدون تنظیمات پیچیده.")
+    if pid == "44trir5v" or "invite" in name.lower():
+        L.append("🔒 آیپی ثابت: هر لوکیشن یک IP اختصاصی و ثابت دارد — مناسب سرویس‌های حساس به آیپی مثل بانک.")
+    if "gaming" in name.lower():
+        L.append("🎮 بهینه‌شده برای گیم و استریم با پینگ پایین.")
+    if "pro" in name.lower():
+        L.append("⚡ نسخه‌ی پرقدرت با هر چهار پروتکل — مناسب استفاده‌ی سنگین و چند دستگاه.")
     return "\n".join(L)
 
 
