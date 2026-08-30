@@ -150,9 +150,9 @@ def build_desc(plan, kind):
     L = [_HOOK.get(pid) or _HOOK_FALLBACK[k], ""]
 
     if countries:
-        shown = "، ".join(countries[:6])
-        if len(countries) > 6:
-            shown += " و %s لوکیشن دیگر" % fa(len(countries) - 6)
+        shown = "، ".join(countries[:4])
+        if len(countries) > 4:
+            shown += " و %s لوکیشن دیگر" % fa(len(countries) - 4)
         L.append("🌍 <b>لوکیشن‌ها:</b> %s" % shown)
     else:
         L.append("🌍 <b>لوکیشن‌ها:</b> چند لوکیشن عالی — بعد از خرید هر کدام را خواستی انتخاب می‌کنی")
@@ -160,15 +160,21 @@ def build_desc(plan, kind):
     if k in ("44trir5v", "invite"):
         L.append("📌 <b>آی‌پی ثابت:</b> جای تو همیشه با یک آی‌پی ثابت — عالی برای اپ‌های بانکی و حساس")
 
+    L.append("")
+
     if protos:
-        pp = "، ".join("%s (%s)" % (_PROTO_NAME.get(p, p), _PROTO_SHORT.get(p, "پایدار")) for p in protos)
-        L.append("🔐 <b>پروتکل‌ها:</b> %s" % pp)
+        shown_p = "، ".join("%s (%s)" % (_PROTO_NAME.get(p, p), _PROTO_SHORT.get(p, "پایدار")) for p in protos[:3])
+        if len(protos) > 3:
+            shown_p += " و %s پروتکل دیگر" % fa(len(protos) - 3)
+        L.append("🔐 <b>پروتکل‌ها:</b> %s" % shown_p)
 
     if days:
         L.append("⏳ <b>اعتبار:</b> %s روز کامل" % fa(days))
 
     if kind == "volume":
         L.append("⚖️ <b>حجم:</b> از %s گیگ به بالا — هر چقدر لازم داری" % fa(min_gb or 1))
+
+    L.append("")
 
     L.append("📱💻 <b>دستگاه‌ها:</b> هم گوشی هم کامپیوتر — بدون تنظیمات پیچیده")
 
